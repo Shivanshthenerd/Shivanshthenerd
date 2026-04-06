@@ -19,8 +19,8 @@ AMFI pipeline feature groups (fund × month panel)
 6. Market trend indicators
 7. Fund quality features
 
-Investor pipeline feature groups (investor × month panel)  ← NEW
-------------------------------------------------------------------
+Investor pipeline feature groups (investor × month panel)
+----------------------------------------------------------
 8.  CAGR features          — annualised compounded return on investor portfolio
 9.  Max drawdown features  — rolling peak-to-trough decline
 10. Risk-adjusted return   — Sharpe ratio computed from actual investor returns
@@ -34,9 +34,21 @@ Target column
 Output
 ------
 ``data/features/features.csv`` — final flat feature table.
+
+Running this script
+-------------------
+Can be invoked directly from any working directory::
+
+    python src/features/feature_engineering.py
 """
 
+import sys
 from pathlib import Path
+
+# Allow running this file directly: python src/features/feature_engineering.py
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import numpy as np
 import pandas as pd
@@ -46,7 +58,8 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-FEATURES_DIR = Path("data/features")
+# Absolute paths — work from any working directory
+FEATURES_DIR  = _PROJECT_ROOT / "data" / "features"
 FEATURES_FILE = FEATURES_DIR / "features.csv"
 
 # Categorical median cache (filled at runtime)
@@ -879,3 +892,79 @@ def run_feature_engineering_investor(
     save_csv(df, out_path)
     log.info("=== Investor feature engineering complete → %s ===", out_path)
     return df
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Standalone entry-points
+# ══════════════════════════════════════════════════════════════════════════════
+
+def main_amfi() -> None:
+    """Run the AMFI feature-engineering stage end-to-end.
+
+    Loads the cleaned merged panel from ``data/processed/merged_panel.csv``,
+    engineers all AMFI features, and writes ``data/features/features_amfi.csv``.
+
+    Run from any working directory::
+
+        python src/features/feature_engineering.py --amfi
+    """
+    from src.utils.io_helpers import read_csv
+
+    merged_path = _PROJECT_ROOT / "data" / "processed" / "merged_panel.csv"
+    out_path    = _PROJECT_ROOT / "data" / "features"  / "features_amfi.csv"
+    try:
+        df_merged = read_csv(merged_path)
+    except FileNotFoundError as exc:
+        log.error("Merged AMFI panel not found: %s", exc)
+        log.error(
+            "Run `python src/ingestion/data_cleaning.py` first to generate "
+            "the merged_panel.csv file."
+        )
+        sys.exit(1)
+
+    run_feature_engineering(df_merged, out_path=out_path)
+
+
+def main_investor() -> None:
+    """Run the investor feature-engineering stage end-to-end.
+
+    Loads the cleaned investor panel from
+    ``data/processed/merged_investor_panel.csv``, engineers all investor
+    features, and writes ``data/features/features.csv``.
+
+    Run from any working directory::
+
+        python src/features/feature_engineering.py
+    """
+    from src.utils.io_helpers import read_csv
+
+    panel_path = _PROJECT_ROOT / "data" / "processed" / "merged_investor_panel.csv"
+    try:
+        df_panel = read_csv(panel_path, parse_dates=["date", "sip_start_date"])
+    except FileNotFoundError as exc:
+        log.error("Investor panel not found: %s", exc)
+        log.error(
+            "Run `python src/ingestion/investor_cleaning.py` first to generate "
+            "the merged_investor_panel.csv file."
+        )
+        sys.exit(1)
+
+    run_feature_engineering_investor(df_panel, out_path=FEATURES_FILE)
+
+
+def main() -> None:
+    """Default entry-point: run the investor feature-engineering pipeline.
+
+    Pass ``--amfi`` as a command-line argument to run the AMFI pipeline
+    instead::
+
+        python src/features/feature_engineering.py --amfi
+    """
+    if "--amfi" in sys.argv:
+        main_amfi()
+    else:
+        main_investor()
+
+
+if __name__ == "__main__":
+    main()

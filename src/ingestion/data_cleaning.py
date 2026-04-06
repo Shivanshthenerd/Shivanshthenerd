@@ -12,9 +12,21 @@ Takes the raw DataFrames produced by ``data_loader.py`` and applies:
 5. Merging both datasets on ``fund_id`` to produce a single enriched
    monthly panel.
 6. Persisting processed artefacts to ``data/processed/``.
+
+Running this script
+-------------------
+Can be invoked directly from any working directory::
+
+    python src/ingestion/data_cleaning.py
 """
 
+import sys
 from pathlib import Path
+
+# Allow running this file directly: python src/ingestion/data_cleaning.py
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import numpy as np
 import pandas as pd
@@ -24,7 +36,8 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-PROCESSED_DIR = Path("data/processed")
+# Absolute path — works from any working directory
+PROCESSED_DIR = _PROJECT_ROOT / "data" / "processed"
 
 # Columns that should be numeric in the fund-level dataset
 FUND_NUMERIC_COLS = [
@@ -309,3 +322,30 @@ def run_cleaning(
     save_csv(merged,   Path(out_dir) / "merged_panel.csv")
 
     return clean_f, clean_m, merged
+
+
+def main() -> None:
+    """Entry-point: load raw AMFI data, clean it, and save processed CSVs.
+
+    Run from any working directory::
+
+        python src/ingestion/data_cleaning.py
+    """
+    from src.ingestion.data_loader import load_all
+
+    try:
+        df_funds, df_monthly = load_all()
+    except FileNotFoundError as exc:
+        log.error("Raw AMFI data not found: %s", exc)
+        log.error(
+            "Run `python data/prepare_dataset.py` first to download and "
+            "generate the AMFI fund files."
+        )
+        sys.exit(1)
+
+    run_cleaning(df_funds, df_monthly)
+    log.info("Cleaning complete — outputs written to %s", PROCESSED_DIR)
+
+
+if __name__ == "__main__":
+    main()

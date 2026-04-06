@@ -34,8 +34,7 @@ data/features/features.csv             ← Investor pipeline output (primary)
 import sys
 from pathlib import Path
 
-# Ensure the project root is on sys.path so src.* imports resolve correctly
-# when the script is invoked from any working directory.
+# ── Project root — resolves correctly from any working directory ──────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -52,8 +51,9 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-AMFI_FEATURES_FILE     = Path("data/features/features_amfi.csv")
-INVESTOR_FEATURES_FILE = Path("data/features/features.csv")
+# Absolute output paths — consistent regardless of working directory
+AMFI_FEATURES_FILE     = PROJECT_ROOT / "data" / "features" / "features_amfi.csv"
+INVESTOR_FEATURES_FILE = PROJECT_ROOT / "data" / "features" / "features.csv"
 
 
 def main() -> None:
@@ -75,7 +75,15 @@ def main() -> None:
 
     # ── Stage 1: Ingestion ────────────────────────────────────────────────────
     log.info("STAGE 1 / 6  Ingestion (AMFI)")
-    df_funds, df_monthly = load_all()
+    try:
+        df_funds, df_monthly = load_all()
+    except FileNotFoundError as exc:
+        log.error("AMFI raw data not found: %s", exc)
+        log.error(
+            "Run `python data/prepare_dataset.py` to download the AMFI "
+            "fund files, then retry."
+        )
+        sys.exit(1)
 
     # ── Stage 2: Cleaning ─────────────────────────────────────────────────────
     log.info("STAGE 2 / 6  Cleaning (AMFI)")
@@ -94,7 +102,15 @@ def main() -> None:
 
     # ── Stage 4: Ingestion (investor datasets) ────────────────────────────────
     log.info("STAGE 4 / 6  Ingestion (Investor)")
-    df_nifty, df_nav, df_investors = load_investor_data_all()
+    try:
+        df_nifty, df_nav, df_investors = load_investor_data_all()
+    except FileNotFoundError as exc:
+        log.error("Investor raw data not found: %s", exc)
+        log.error(
+            "Run `python src/ingestion/simulate_investors.py` to generate "
+            "the investor dataset files, then retry."
+        )
+        sys.exit(1)
 
     # ── Stage 5: Cleaning + panel construction ────────────────────────────────
     log.info("STAGE 5 / 6  Cleaning (Investor)")

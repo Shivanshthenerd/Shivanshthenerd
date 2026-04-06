@@ -26,9 +26,21 @@ Responsibilities of this module
 - Standardise column names (lowercase, underscored).
 - Validate that mandatory columns are present.
 - Return clean DataFrames ready for the cleaning stage.
+
+Running this script
+-------------------
+Can be invoked directly from any working directory to verify datasets::
+
+    python src/ingestion/data_loader.py
 """
 
+import sys
 from pathlib import Path
+
+# Allow running this file directly: python src/ingestion/data_loader.py
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import pandas as pd
 
@@ -37,13 +49,14 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-# ── Default paths (relative to project root) ─────────────────────────────────
-RAW_DIR = Path("data/raw")
-FUNDS_FILE     = RAW_DIR / "india_mf_funds.csv"
-MONTHLY_FILE   = RAW_DIR / "sip_india_monthly.csv"
-NIFTY_FILE     = RAW_DIR / "nifty50_monthly.csv"
-FUND_NAV_FILE  = RAW_DIR / "fund_nav_monthly.csv"
-INVESTORS_FILE = RAW_DIR / "sip_investors.csv"
+# ── Absolute paths (work from any working directory) ──────────────────────────
+_RAW_DIR       = _PROJECT_ROOT / "data" / "raw"
+RAW_DIR        = _RAW_DIR
+FUNDS_FILE     = _RAW_DIR / "india_mf_funds.csv"
+MONTHLY_FILE   = _RAW_DIR / "sip_india_monthly.csv"
+NIFTY_FILE     = _RAW_DIR / "nifty50_monthly.csv"
+FUND_NAV_FILE  = _RAW_DIR / "fund_nav_monthly.csv"
+INVESTORS_FILE = _RAW_DIR / "sip_investors.csv"
 
 # Mandatory columns for each dataset
 FUNDS_REQUIRED_COLS = {
@@ -290,3 +303,55 @@ def load_investor_data_all(
     df_nav       = load_fund_nav(nav_path)
     df_investors = load_investors(investors_path)
     return df_nifty, df_nav, df_investors
+
+
+def main() -> None:
+    """Entry-point: load all five datasets and print a summary.
+
+    Useful for quickly verifying that all raw CSV files are present and
+    have the expected structure.  Run from any directory::
+
+        python src/ingestion/data_loader.py
+    """
+    errors: list[str] = []
+
+    def _try_load(name: str, loader, *args):
+        try:
+            return loader(*args)
+        except FileNotFoundError as exc:
+            log.error("%s: %s", name, exc)
+            errors.append(name)
+            return None
+
+    df_funds   = _try_load("india_mf_funds",     load_funds)
+    df_monthly = _try_load("sip_india_monthly",  load_monthly)
+    df_nifty   = _try_load("nifty50_monthly",    load_nifty)
+    df_nav     = _try_load("fund_nav_monthly",   load_fund_nav)
+    df_investors = _try_load("sip_investors",    load_investors)
+
+    print("\n── Dataset summary ──────────────────────────────────────")
+    for label, df in [
+        ("india_mf_funds",    df_funds),
+        ("sip_india_monthly", df_monthly),
+        ("nifty50_monthly",   df_nifty),
+        ("fund_nav_monthly",  df_nav),
+        ("sip_investors",     df_investors),
+    ]:
+        if df is not None:
+            print(f"  {label:<24} shape={df.shape}")
+        else:
+            print(f"  {label:<24} MISSING — run prepare_dataset.py or simulate_investors.py")
+
+    if errors:
+        print(
+            f"\n{len(errors)} file(s) missing.  "
+            "Run `python data/prepare_dataset.py` (AMFI data) or "
+            "`python src/ingestion/simulate_investors.py` (investor data) "
+            "to generate them.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

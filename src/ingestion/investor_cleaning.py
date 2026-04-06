@@ -34,9 +34,21 @@ missed_this_month, cumulative_missed, total_months_active,
 nav, fund_monthly_return, cumulative_units, portfolio_value,
 total_invested, nifty_close, nifty_monthly_return, nifty_drawdown,
 churn (target: 1 = investor eventually stopped SIP)
+
+Running this script
+-------------------
+Can be invoked directly from any working directory::
+
+    python src/ingestion/investor_cleaning.py
 """
 
+import sys
 from pathlib import Path
+
+# Allow running this file directly: python src/ingestion/investor_cleaning.py
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import numpy as np
 import pandas as pd
@@ -46,8 +58,9 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-PROCESSED_DIR      = Path("data/processed")
-PANEL_OUTPUT_FILE  = PROCESSED_DIR / "merged_investor_panel.csv"
+# Absolute paths — work from any working directory
+PROCESSED_DIR     = _PROJECT_ROOT / "data" / "processed"
+PANEL_OUTPUT_FILE = PROCESSED_DIR / "merged_investor_panel.csv"
 
 SIM_END = pd.Timestamp("2024-12-01")
 
@@ -292,12 +305,10 @@ def compute_sip_portfolio(df_panel: pd.DataFrame) -> pd.DataFrame:
     df_panel["cumulative_units"] = (
         df_panel.groupby("investor_id")["units_bought"].cumsum()
     )
-    df_panel["total_invested"] = (
-        df_panel.groupby("investor_id")
-        .apply(lambda g: (g["monthly_investment"] * (1 - g["missed_this_month"])).cumsum(),
-               include_groups=False)
-        .reset_index(level=0, drop=True)
-    )
+    # total_invested: running sum of effective monthly contributions
+    # (0 for missed months, monthly_investment otherwise)
+    effective_investment = df_panel["monthly_investment"] * (1 - df_panel["missed_this_month"])
+    df_panel["total_invested"] = effective_investment.groupby(df_panel["investor_id"]).cumsum()
 
     # Current portfolio value
     df_panel["portfolio_value"] = df_panel["cumulative_units"] * valid_nav
@@ -399,3 +410,34 @@ def run_investor_cleaning(
         *df.shape, out_path,
     )
     return df
+
+
+def main() -> None:
+    """Entry-point: load raw investor data, build panel, and save.
+
+    Run from any working directory::
+
+        python src/ingestion/investor_cleaning.py
+    """
+    from src.ingestion.data_loader import load_investor_data_all
+    from src.ingestion.simulate_investors import run_simulation
+
+    # Ensure raw investor files exist
+    run_simulation()
+
+    try:
+        df_nifty, df_nav, df_investors = load_investor_data_all()
+    except FileNotFoundError as exc:
+        log.error("Investor raw data not found: %s", exc)
+        log.error(
+            "Run `python src/ingestion/simulate_investors.py` to generate "
+            "the investor dataset files."
+        )
+        sys.exit(1)
+
+    run_investor_cleaning(df_investors, df_nav, df_nifty)
+    log.info("Investor cleaning complete — output written to %s", PANEL_OUTPUT_FILE)
+
+
+if __name__ == "__main__":
+    main()

@@ -24,12 +24,25 @@ Datasets produced
    monthly_investment, sip_start_date, sip_end_date, missed_payments,
    status (active/stopped).
 
-Usage
------
-    python -c "from src.ingestion.simulate_investors import run_simulation; run_simulation()"
+Running this script
+-------------------
+Can be invoked directly from any working directory::
+
+    python src/ingestion/simulate_investors.py
+
+or imported and called programmatically::
+
+    from src.ingestion.simulate_investors import run_simulation
+    run_simulation()
 """
 
+import sys
 from pathlib import Path
+
+# Allow running this file directly: python src/ingestion/simulate_investors.py
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import numpy as np
 import pandas as pd
@@ -39,7 +52,8 @@ from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-RAW_DIR = Path("data/raw")
+# Absolute path to data/raw — works from any working directory
+RAW_DIR = _PROJECT_ROOT / "data" / "raw"
 
 # ── Simulation parameters ──────────────────────────────────────────────────────
 RANDOM_SEED   = 42
@@ -405,14 +419,14 @@ def run_simulation(out_dir: str | Path = RAW_DIR, force: bool = False) -> None:
     Parameters
     ----------
     out_dir : str or Path
-        Directory where raw CSVs are saved (default: ``data/raw``).
+        Directory where raw CSVs are saved (default: ``<project_root>/data/raw``).
     force : bool
         If False (default), skip simulation when all three files already
         exist.  Set to True to re-generate from scratch.
     """
     out_dir = Path(out_dir)
-    nifty_path    = out_dir / "nifty50_monthly.csv"
-    nav_path      = out_dir / "fund_nav_monthly.csv"
+    nifty_path     = out_dir / "nifty50_monthly.csv"
+    nav_path       = out_dir / "fund_nav_monthly.csv"
     investors_path = out_dir / "sip_investors.csv"
 
     if not force and nifty_path.exists() and nav_path.exists() and investors_path.exists():
@@ -428,3 +442,12 @@ def run_simulation(out_dir: str | Path = RAW_DIR, force: bool = False) -> None:
     save_csv(df_nav,       nav_path)
     save_csv(df_investors, investors_path)
     log.info("=== Simulation complete — 3 raw CSVs written to %s ===", out_dir)
+
+
+def main() -> None:
+    """Entry-point when the script is run directly or as a module."""
+    run_simulation()
+
+
+if __name__ == "__main__":
+    main()

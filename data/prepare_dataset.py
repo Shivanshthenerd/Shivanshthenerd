@@ -19,18 +19,35 @@ What this script does
 5. Derives a binary monthly SIP-attrition label from real fund metrics:
    poor trailing performance, high drawdown, high expense relative to
    category, and low rating all increase the churn probability.
-6. Saves the resulting dataset to data/sip_india_monthly.csv and the
-   raw fund-level snapshot to data/india_mf_funds.csv.
+6. Saves the resulting dataset to data/raw/sip_india_monthly.csv and the
+   raw fund-level snapshot to data/raw/india_mf_funds.csv.
+
+Running this script
+-------------------
+Can be invoked directly from any working directory::
+
+    python data/prepare_dataset.py
+
+or imported and called programmatically::
+
+    from data.prepare_dataset import main; main()
 """
 
 import io
+import sys
 import urllib.request
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 warnings.filterwarnings("ignore")
+
+# ── Project root and output directory ────────────────────────────────────────
+# Resolves correctly regardless of the current working directory.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_RAW_DIR      = _PROJECT_ROOT / "data" / "raw"
 
 SEED = 42
 N_MONTHS = 120          # 10 years of monthly observations per fund
@@ -168,8 +185,33 @@ def add_churn_label(df: pd.DataFrame, seed: int = SEED) -> pd.DataFrame:
 
 # ── 4. Encode & save ──────────────────────────────────────────────────────────
 
-def prepare_and_save(out_monthly: str = "data/sip_india_monthly.csv",
-                     out_funds:   str = "data/india_mf_funds.csv") -> None:
+def prepare_and_save(
+    out_monthly: str | Path | None = None,
+    out_funds:   str | Path | None = None,
+) -> None:
+    """Download, expand and save the AMFI fund datasets.
+
+    Parameters
+    ----------
+    out_monthly:
+        Destination path for the monthly panel CSV.
+        Defaults to ``<project_root>/data/raw/sip_india_monthly.csv``.
+    out_funds:
+        Destination path for the fund-level snapshot CSV.
+        Defaults to ``<project_root>/data/raw/india_mf_funds.csv``.
+    """
+    if out_monthly is None:
+        out_monthly = _RAW_DIR / "sip_india_monthly.csv"
+    if out_funds is None:
+        out_funds = _RAW_DIR / "india_mf_funds.csv"
+
+    out_monthly = Path(out_monthly)
+    out_funds   = Path(out_funds)
+
+    # Ensure output directory exists
+    out_monthly.parent.mkdir(parents=True, exist_ok=True)
+    out_funds.parent.mkdir(parents=True, exist_ok=True)
+
     df_funds = download_funds()
     df_funds.to_csv(out_funds, index=False)
     print(f"Fund-level data saved to {out_funds}")
@@ -193,5 +235,21 @@ def prepare_and_save(out_monthly: str = "data/sip_india_monthly.csv",
     print(f"  Features   : {[c for c in df_monthly.columns if c != 'churn']}")
 
 
+def main() -> None:
+    """Entry-point when the script is run directly or as a module."""
+    try:
+        prepare_and_save()
+    except urllib.error.URLError as exc:
+        print(
+            f"Network error — could not download fund data: {exc}\n"
+            "Check your internet connection and try again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except Exception as exc:
+        print(f"Unexpected error: {exc}", file=sys.stderr)
+        raise
+
+
 if __name__ == "__main__":
-    prepare_and_save()
+    main()
