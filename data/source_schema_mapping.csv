@@ -1,0 +1,24 @@
+source_dataset,source_column,canonical_column,normalization_rule
+medical_insurance_premium.csv,PolicyID,policyid,trim+lower snake case column normalization
+medical_insurance_premium.csv,CustomerID,customerid,trim+lower snake case column normalization
+medical_insurance_premium.csv,Age,age,numeric coercion and clip >= 0
+medical_insurance_premium.csv,BMI,bmi,numeric coercion and clip >= 0
+medical_insurance_premium.csv,AnnualPremium,annualpremium,strip ₹ and commas then numeric coercion and clip >= 0
+medical_insurance_premium.csv,BloodPressure,bloodpressure,column alias normalization
+medical_insurance_premium.csv,PreExistingConditions,preexistingconditions,column alias normalization
+medical_insurance_premium.csv,PremiumType,premiumtype,column alias normalization
+medical_insurance_premium.csv,InsurancePlan,insuranceplan,column alias normalization
+insurance_claims.csv,ClaimID,claimid,trim+lower snake case column normalization
+insurance_claims.csv,PolicyID,policyid,trim+lower snake case column normalization
+insurance_claims.csv,CustomerID,customerid,trim+lower snake case column normalization
+insurance_claims.csv,ClaimDate,claimdate,date parse and canonicalize YYYY-MM-DD
+insurance_claims.csv,ClaimAmount,claimamount,strip ₹ and commas then numeric coercion and clip >= 0
+insurance_claims.csv,ClaimStatus,claimstatus,status map to approved/rejected/pending
+insurance_claims.csv,SettlementAmount,settlementamount,strip ₹ and commas then numeric coercion and clip >= 0
+policy.csv,PolicyID,policyid,trim+lower snake case column normalization
+policy.csv,CustomerID,customerid,trim+lower snake case column normalization
+policy.csv,PolicyStartDate,policystartdate,date parse and canonicalize YYYY-MM-DD
+policy.csv,PolicyEndDate,policyenddate,date parse and canonicalize YYYY-MM-DD
+policy.csv,SumInsured,suminsured,strip ₹ and commas then numeric coercion and clip >= 0
+policy.csv,RenewalStatus,renewalstatus,status map to renewed/lapsed/pending
+policy.csv,ChurnLabel,churnlabel,accept churn aliases then integer coercion
