@@ -105,6 +105,9 @@ print(f"Train batches : {len(train_loader)}")
 print(f"Test batches  : {len(test_loader)}")
 print(f"Device        : {device}")
 
+train_losses = []
+train_accuracies = []
+
 for epoch in range(1, EPOCHS + 1):
     model.train()
     epoch_loss = 0.0
@@ -130,6 +133,8 @@ for epoch in range(1, EPOCHS + 1):
 
     avg_loss = epoch_loss / len(train_loader.dataset)
     epoch_acc = correct / total
+    train_losses.append(avg_loss)
+    train_accuracies.append(epoch_acc)
     print(f"Epoch {epoch:02d}/{EPOCHS} - Loss: {avg_loss:.4f} - Accuracy: {epoch_acc:.4f}")
 
 model.eval()
@@ -185,4 +190,25 @@ axes[1].set_ylabel("True Positive Rate")
 axes[1].legend(loc="lower right")
 
 plt.tight_layout()
+plt.show()
+
+epochs = list(range(1, EPOCHS + 1))
+plt.figure(figsize=(10, 4))
+plt.subplot(1, 2, 1)
+plt.plot(epochs, train_losses, marker="o")
+plt.title("Training Loss by Epoch")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.grid(alpha=0.3)
+
+plt.subplot(1, 2, 2)
+plt.plot(epochs, train_accuracies, marker="o")
+plt.title("Training Accuracy by Epoch")
+plt.xlabel("Epoch")
+plt.ylabel("Accuracy")
+plt.ylim(0, 1)
+plt.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.savefig("pytorch_training_curves.png", dpi=150)
 plt.show()
