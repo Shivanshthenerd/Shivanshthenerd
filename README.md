@@ -2,43 +2,80 @@
 
 ---
 
-# 📈 Indian SIP Churn Rate Prediction — Deep Learning Project
+# 📈 Indian SIP Churn Rate Prediction
 
-A deep learning project that predicts whether SIP investors will **discontinue (churn) a mutual fund scheme**, enabling AMCs and financial advisors to intervene proactively.
+A **production-grade** Python project for predicting SIP (Systematic Investment Plan) churn in India, built on real AMFI mutual fund data.
+
+---
+
+## Project Structure
+
+```
+.
+├── data/
+│   ├── raw/                        # Source CSVs (real Indian MF data)
+│   │   ├── india_mf_funds.csv      # 814 AMFI-registered fund schemes
+│   │   └── sip_india_monthly.csv   # 87 912 fund × month observations
+│   ├── processed/                  # Cleaned & merged artefacts
+│   │   ├── funds_clean.csv
+│   │   ├── monthly_clean.csv
+│   │   └── merged_panel.csv
+│   └── features/
+│       └── features.csv            # ← final feature table for modelling
+│
+├── src/
+│   ├── ingestion/
+│   │   ├── data_loader.py          # Stage 1 – load & validate raw CSVs
+│   │   └── data_cleaning.py        # Stage 2 – impute, cap, dedup, merge
+│   ├── features/
+│   │   └── feature_engineering.py  # Stage 3 – generate all features
+│   └── utils/
+│       ├── logger.py               # Shared logging configuration
+│       └── io_helpers.py           # Safe CSV read/write helpers
+│
+├── notebooks/                      # Jupyter notebooks for exploration
+├── outputs/                        # Model outputs, plots, reports
+├── run_pipeline.py                 # ← entry point (runs all 3 stages)
+├── sip_churn_prediction.ipynb      # Deep learning notebook (DNN + LSTM)
+└── requirements.txt
+```
+
+---
 
 ## Real Indian Dataset
 
-| File | Source | Description |
+| File | Source | Rows |
 |---|---|---|
-| `data/india_mf_funds.csv` | **Kaggle — "Mutual Funds India Detailed"** (real AMFI data) | 814 real Indian MF schemes with expense ratio, returns, risk metrics, ratings |
-| `data/sip_india_monthly.csv` | Derived from above | Each fund × 120 months → 87 912 fund-month rows with churn label |
+| `data/raw/india_mf_funds.csv` | **Kaggle "Mutual Funds India Detailed"** (AMFI) | 814 schemes |
+| `data/raw/sip_india_monthly.csv` | Derived from above (814 funds × 120 months) | 87 912 |
 
-> **Data note :** Individual SIP investor records are proprietary to AMCs and not publicly available. This project uses real AMFI fund-level data and models SIP attrition at the **fund-month level** — the standard approach in published research on Indian mutual fund churn.
+> Individual SIP investor records are proprietary to AMCs and are not publicly available in India. This project models attrition at the **fund-month level** using real AMFI fund statistics — the standard approach in academic research on Indian MF churn.
 
-Real features used from the Kaggle dataset:
+---
+
+## Feature Engineering Pipeline
+
+Run the entire pipeline with one command:
+
+```bash
+python run_pipeline.py
+```
+
+### Features generated (`data/features/features.csv` — 48 columns)
 
 | Group | Features |
 |---|---|
-| Fund characteristics | `scheme_name`, `amc_name`, `category`, `sub_category`, `fund_age_yr` |
-| Fees & minimums | `expense_ratio`, `min_sip`, `min_lumpsum` |
-| Performance | `returns_1yr`, `returns_3yr`, `returns_5yr`, `alpha`, `beta`, `sharpe`, `sortino`, `sd` |
-| Risk & rating | `risk_level` (1–6), `rating` (0–5 stars), `fund_size_cr` |
+| **Tenure** | `tenure_months`, `tenure_band`, `is_early_stage` |
+| **Rolling returns** | `roll_3m_return`, `roll_6m_return`, `roll_12m_return`, `return_momentum`, `return_reversal`, `excess_return_3m`, `excess_return_6m` |
+| **Volatility** | `volatility_3m`, `volatility_ratio`, `sharpe_3m` |
+| **SIP consistency** | `missed_payment_ratio`, `payment_regularity`, `consec_neg_flag` |
+| **Investment / cost** | `avg_sip_amount`, `relative_expense`, `cost_drag` |
+| **Market trend** | `drawdown_severity`, `above_benchmark`, `alpha_positive` |
+| **Fund quality** | `rating_band`, `risk_adj_return`, `size_band` |
+| **Raw fund stats** | `expense_ratio`, `alpha`, `beta`, `sharpe`, `sortino`, `risk_level`, `rating`, … |
+| **Target** | **`churn`** (1 = discontinued SIP, 0 = active) |
 
-Time-varying (monthly) features engineered from real fund stats:
-
-`monthly_return`, `roll_3m_return`, `roll_6m_return`, `roll_12m_return`, `nav_ratio_12m`, `drawdown`, `vol_3m`, `rel_perf_vs_cat`, `consec_neg`
-
-## Deep Learning Pipeline
-
-1. **EDA** — real AMC/category distributions, return boxplots, correlation heatmap
-2. **Feature Engineering** — expense/alpha ratio, return/volatility ratio, momentum, rating efficiency
-3. **SMOTE** — handles class imbalance
-4. **Baseline** — Logistic Regression
-5. **Deep Neural Network (DNN)** — 4-layer network with BatchNorm & Dropout
-6. **LSTM** — 12-month rolling window on sequential monthly performance
-7. **Evaluation** — ROC & Precision-Recall curves, confusion matrices, summary table
-8. **Permutation Feature Importance** — which real fund metrics drive churn
-9. **Risk Scoring** — segment funds into Low / Medium / High / Critical and surface the most at-risk Indian schemes by name
+---
 
 ## Getting Started
 
@@ -46,30 +83,22 @@ Time-varying (monthly) features engineered from real fund stats:
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Prepare the dataset (downloads real Indian MF data from GitHub/Kaggle mirror)
-python data/prepare_dataset.py
+# 2. Run the feature pipeline (ingestion → cleaning → feature engineering)
+python run_pipeline.py
 
-# 3. Open the notebook
+# 3. Open the deep learning notebook
 jupyter notebook sip_churn_prediction.ipynb
 ```
 
-## Key SIP Attrition Drivers (from real Indian fund data)
+---
 
-| Rank | Feature | Insight |
-|---|---|---|
-| 1 | `rel_perf_vs_cat` | Underperforming the category benchmark is the #1 driver |
-| 2 | `roll_3m_return` | Poor trailing 3-month return → investors stop SIPs |
-| 3 | `drawdown` | Sharp NAV decline triggers redemptions |
-| 4 | `expense_ratio` | High fees with poor returns → SIP discontinuation |
-| 5 | `rating` | Low-rated funds (1–2 stars) see more churn |
-| 6 | `consec_neg` | 3 consecutive negative months → alarm signal |
-| 7 | `alpha` | Negative alpha (underperforms benchmark) → high churn |
+## Module Reference
 
-## Recommended Actions for Indian AMCs
-
-| Segment | Action |
+| Module | Responsibility |
 |---|---|
-| **Critical** (>75%) | Immediate investor communication; offer fund switch or SIP pause |
-| **High** (55–75%) | Personalised update with category context; SIP step-up offer |
-| **Medium** (30–55%) | Educational content on rupee cost averaging; show recovery history |
-| **Low** (<30%) | Regular statements; reward long-tenure SIP investors |
+| `src/utils/logger.py` | Shared `get_logger()` — consistent timestamps across all stages |
+| `src/utils/io_helpers.py` | `read_csv()` / `save_csv()` with logging and auto-mkdir |
+| `src/ingestion/data_loader.py` | Load raw CSVs, standardise column names, validate schema |
+| `src/ingestion/data_cleaning.py` | Impute nulls (median/mode), cap IQR outliers, deduplicate, merge |
+| `src/features/feature_engineering.py` | Generate all 40+ features, encode categoricals, produce `features.csv` |
+| `run_pipeline.py` | Orchestrate all three stages end-to-end |
