@@ -3,6 +3,7 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from feature_engineering import df
 
+MISSING_CATEGORICAL_PLACEHOLDER = "unknown"
 
 df_model = df.copy()
 
@@ -15,10 +16,14 @@ if target_col is None:
 for col in df_model.columns:
     if df_model[col].isnull().any():
         if pd.api.types.is_numeric_dtype(df_model[col]):
-            df_model[col] = df_model[col].fillna(df_model[col].median())
+            median = df_model[col].median()
+            fill_value = 0 if pd.isna(median) else median
+            df_model[col] = df_model[col].fillna(fill_value)
         else:
             mode = df_model[col].mode(dropna=True)
-            df_model[col] = df_model[col].fillna(mode.iloc[0] if not mode.empty else "unknown")
+            df_model[col] = df_model[col].fillna(
+                mode.iloc[0] if not mode.empty else MISSING_CATEGORICAL_PLACEHOLDER
+            )
 
 # Encode categorical columns
 categorical_cols = [
@@ -41,14 +46,23 @@ feature_cols = [c for c in df_model.columns if c != target_col]
 for col in feature_cols:
     df_model[col] = pd.to_numeric(df_model[col], errors="coerce")
     if df_model[col].isnull().any():
-        df_model[col] = df_model[col].fillna(df_model[col].median())
+        median = df_model[col].median()
+        fill_value = 0 if pd.isna(median) else median
+        df_model[col] = df_model[col].fillna(fill_value)
 
 # Scale numeric features
 scaler = StandardScaler()
 df_model[feature_cols] = scaler.fit_transform(df_model[feature_cols])
 
 # Split X and y for downstream scripts
-y = pd.to_numeric(df_model[target_col], errors="coerce").fillna(0).astype(int)
+y_numeric = pd.to_numeric(df_model[target_col], errors="coerce")
+if y_numeric.isnull().any():
+    bad_count = int(y_numeric.isnull().sum())
+    raise ValueError(
+        f"Target column '{target_col}' has {bad_count} non-numeric value(s). "
+        "Fix target values before modeling."
+    )
+y = y_numeric.astype(int)
 X = df_model[feature_cols]
 
 print("\n" + "=" * 50)

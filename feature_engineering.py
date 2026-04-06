@@ -13,6 +13,12 @@ DATASET11_PATH = DATA_DIR / "dataset11.xlsx"
 HANDBOOK_PATH = DATA_DIR / "Hand Book 2021-22_Part III_Health Insurance.xlsx"
 
 NS = {"a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+NUMERIC_CONVERSION_THRESHOLD = 0.8
+PREMIUM_BURDEN_WEIGHT = 40.0
+SMOKER_WEIGHT = 2.0
+DIABETES_WEIGHT = 1.2
+CHRONIC_DISEASE_WEIGHT = 1.2
+PRE_EXISTING_WEIGHT = 1.0
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -87,7 +93,9 @@ def _load_xlsx_first_sheet(path: Path) -> pd.DataFrame:
 
     for col in df.columns:
         converted = pd.to_numeric(df[col], errors="coerce")
-        if converted.notna().mean() > 0.8:
+        # Convert a column to numeric only when most values parse as numeric.
+        # This avoids accidental conversion of predominantly text columns.
+        if converted.notna().mean() > NUMERIC_CONVERSION_THRESHOLD:
             df[col] = converted
 
     return _normalize_columns(df)
@@ -113,13 +121,49 @@ def _extract_xlsx_numeric_values(path: Path) -> list[float]:
     return numeric_vals
 
 
+def _safe_load_csv(path: Path) -> pd.DataFrame:
+    try:
+        return _normalize_columns(pd.read_csv(path))
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Required dataset file not found: {path}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read dataset file: {path}") from exc
+
+
+def _safe_load_xlsx_first_sheet(path: Path) -> pd.DataFrame:
+    try:
+        return _load_xlsx_first_sheet(path)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Required dataset file not found: {path}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Failed to parse workbook first sheet: {path}") from exc
+
+
+def _safe_extract_xlsx_numeric_values(path: Path) -> list[float]:
+    try:
+        return _extract_xlsx_numeric_values(path)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Required dataset file not found: {path}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Failed to extract numeric values from workbook: {path}") from exc
+
+
+def _safe_divide_premium_by_income(
+    med_premium: pd.Series, ds11_premium_annualized: pd.Series, income: pd.Series
+) -> pd.Series:
+    return (med_premium + ds11_premium_annualized).div(income.replace(0, pd.NA)).fillna(0)
+
+
 # 1) Load all 4 newly-added datasets
-indian_df = _normalize_columns(pd.read_csv(INDIAN_DATA_PATH))
-medical_df = _normalize_columns(pd.read_csv(MEDICAL_PREMIUM_PATH))
-dataset11_df = _load_xlsx_first_sheet(DATASET11_PATH)
-handbook_numeric = _extract_xlsx_numeric_values(HANDBOOK_PATH)
+indian_df = _safe_load_csv(INDIAN_DATA_PATH)
+medical_df = _safe_load_csv(MEDICAL_PREMIUM_PATH)
+dataset11_df = _safe_load_xlsx_first_sheet(DATASET11_PATH)
+handbook_numeric = _safe_extract_xlsx_numeric_values(HANDBOOK_PATH)
 
 # 2) Align and combine datasets using deterministic row-wise repetition
+# The 4 files do not share stable keys for a relational join, so rows are aligned
+# deterministically by repeating shorter datasets over the base dataset index.
+# This keeps every new dataset in use while producing a single modeling table.
 base = indian_df.reset_index(drop=True).copy()
 med_repeated = medical_df.reindex(base.index % len(medical_df)).reset_index(drop=True)
 ds11_repeated = dataset11_df.reindex(base.index % len(dataset11_df)).reset_index(drop=True)
@@ -141,26 +185,32 @@ else:
     df["handbook_numeric_p90"] = 0.0
 
 # 4) Build churn label from combined risk signals
-for col in ["smoker", "med_diabetes", "med_anychronicdiseases", "ds11_pre_existing_conditions"]:
+health_signal_cols = ["smoker", "med_diabetes", "med_anychronicdiseases", "ds11_pre_existing_conditions"]
+missing_health_cols = [col for col in health_signal_cols if col not in df.columns]
+if missing_health_cols:
+    print(f"Warning: Missing expected health signal column(s): {missing_health_cols}")
+
+for col in health_signal_cols:
     if col in df.columns:
         df[col] = df[col].astype(str).str.lower().replace({"true": "1", "false": "0", "yes": "1", "no": "0"})
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
 income = pd.to_numeric(df.get("income_lpa", 0), errors="coerce").fillna(0) * 100_000
 med_premium = pd.to_numeric(df.get("med_premiumprice", 0), errors="coerce").fillna(0)
-ds11_premium_annual = pd.to_numeric(df.get("ds11_monthly_premium", 0), errors="coerce").fillna(0) * 12
+ds11_premium_annualized = pd.to_numeric(df.get("ds11_monthly_premium", 0), errors="coerce").fillna(0) * 12
 
-premium_burden = (med_premium + ds11_premium_annual) / income.replace(0, pd.NA)
-premium_burden = premium_burden.fillna(0)
+premium_burden = _safe_divide_premium_by_income(med_premium, ds11_premium_annualized, income)
 
 risk_score = (
-    premium_burden * 40
-    + pd.to_numeric(df.get("smoker", 0), errors="coerce").fillna(0) * 2.0
-    + pd.to_numeric(df.get("med_diabetes", 0), errors="coerce").fillna(0) * 1.2
-    + pd.to_numeric(df.get("med_anychronicdiseases", 0), errors="coerce").fillna(0) * 1.2
-    + pd.to_numeric(df.get("ds11_pre_existing_conditions", 0), errors="coerce").fillna(0) * 1.0
+    premium_burden * PREMIUM_BURDEN_WEIGHT
+    + pd.to_numeric(df.get("smoker", 0), errors="coerce").fillna(0) * SMOKER_WEIGHT
+    + pd.to_numeric(df.get("med_diabetes", 0), errors="coerce").fillna(0) * DIABETES_WEIGHT
+    + pd.to_numeric(df.get("med_anychronicdiseases", 0), errors="coerce").fillna(0) * CHRONIC_DISEASE_WEIGHT
+    + pd.to_numeric(df.get("ds11_pre_existing_conditions", 0), errors="coerce").fillna(0) * PRE_EXISTING_WEIGHT
 )
 
+# This is a proxy churn target derived from risk signals because the added
+# datasets do not provide a direct churn label for every combined row.
 df["churnlabel"] = (risk_score > risk_score.median()).astype(int)
 
 print("\n" + "=" * 50)
