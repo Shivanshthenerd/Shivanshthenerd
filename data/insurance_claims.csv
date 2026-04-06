@@ -1,0 +1,16 @@
+ClaimID,PolicyID,CustomerID,ClaimDate,ClaimAmount,ClaimType,HospitalName,DiagnosisCode,ClaimStatus,SettlementAmount
+CLM001,POL002,CUST002,2023-04-15,55000,Hospitalisation,Apollo Hospital Delhi,I10,Approved,52000
+CLM002,POL004,CUST004,2023-06-20,120000,Surgery,Fortis Hospital Chennai,M54,Approved,115000
+CLM003,POL007,CUST007,2023-07-08,8000,OPD,AMRI Hospital Kolkata,J06,Approved,7500
+CLM004,POL008,CUST008,2023-09-12,95000,Hospitalisation,Medanta Lucknow,E11,Approved,90000
+CLM005,POL010,CUST010,2023-11-03,40000,Hospitalisation,Max Hospital Chandigarh,K80,Approved,38000
+CLM006,POL001,CUST001,2023-12-18,15000,OPD,Ruby Hall Pune,J45,Rejected,0
+CLM007,POL013,CUST013,2024-01-25,200000,ICU,AIIMS Patna,I63,Approved,190000
+CLM008,POL006,CUST006,2024-02-10,70000,Surgery,SMS Hospital Jaipur,C50,Approved,66000
+CLM009,POL015,CUST015,2024-03-05,30000,Hospitalisation,Gauhati Medical College,A09,Approved,28000
+CLM010,POL003,CUST003,2024-03-22,22000,Hospitalisation,Manipal Hospital Bengaluru,S72,Pending,0
+CLM011,POL004,CUST004,2024-04-01,85000,Hospitalisation,Fortis Hospital Chennai,I25,Approved,80000
+CLM012,POL008,CUST008,2024-05-14,46000,Surgery,Medanta Lucknow,N18,Approved,43000
+CLM013,POL013,CUST013,2024-06-30,310000,ICU,AIIMS Patna,I21,Approved,295000
+CLM014,POL011,CUST011,2024-07-19,18000,OPD,Artemis Hospital Gurgaon,M79,Approved,17000
+CLM015,POL002,CUST002,2024-08-27,63000,Hospitalisation,Apollo Hospital Delhi,E11,Approved,60000
