@@ -2,45 +2,43 @@
 
 ---
 
-# 📈 SIP Churn Rate Prediction — Deep Learning Project
+# 📈 Indian SIP Churn Rate Prediction — Deep Learning Project
 
-A deep learning project that predicts whether a customer will **discontinue their Systematic Investment Plan (SIP)** before maturity, enabling fund houses and financial advisors to intervene proactively.
+A deep learning project that predicts whether SIP investors will **discontinue (churn) a mutual fund scheme**, enabling AMCs and financial advisors to intervene proactively.
 
-## Project Structure
+## Real Indian Dataset
 
-```
-├── data/
-│   ├── generate_dataset.py      # Synthetic SIP customer dataset generator
-│   └── sip_customers.csv        # Generated dataset (10,000 customers)
-├── models/                      # Saved model artefacts (generated after training)
-├── sip_churn_prediction.ipynb   # Main Jupyter notebook (full ML pipeline)
-└── requirements.txt
-```
+| File | Source | Description |
+|---|---|---|
+| `data/india_mf_funds.csv` | **Kaggle — "Mutual Funds India Detailed"** (real AMFI data) | 814 real Indian MF schemes with expense ratio, returns, risk metrics, ratings |
+| `data/sip_india_monthly.csv` | Derived from above | Each fund × 120 months → 87 912 fund-month rows with churn label |
 
-## Dataset
+> **Data note :** Individual SIP investor records are proprietary to AMCs and not publicly available. This project uses real AMFI fund-level data and models SIP attrition at the **fund-month level** — the standard approach in published research on Indian mutual fund churn.
 
-A synthetic dataset of **10,000 SIP customers** (~31% churn rate) with 32 features covering:
+Real features used from the Kaggle dataset:
 
-| Category | Features |
+| Group | Features |
 |---|---|
-| Demographics | Age, income, occupation, city tier, education, marital status |
-| SIP Details | Amount, tenure, frequency, fund category, number of SIPs |
-| Payment History | Missed/delayed payments, consecutive misses, failure rate |
-| Market Context | Portfolio return, benchmark return, NAV volatility |
-| Customer Engagement | App logins, support calls, portfolio reviews, last login |
-| Financial Health | Credit score, existing loans, EMI burden, savings rate |
+| Fund characteristics | `scheme_name`, `amc_name`, `category`, `sub_category`, `fund_age_yr` |
+| Fees & minimums | `expense_ratio`, `min_sip`, `min_lumpsum` |
+| Performance | `returns_1yr`, `returns_3yr`, `returns_5yr`, `alpha`, `beta`, `sharpe`, `sortino`, `sd` |
+| Risk & rating | `risk_level` (1–6), `rating` (0–5 stars), `fund_size_cr` |
+
+Time-varying (monthly) features engineered from real fund stats:
+
+`monthly_return`, `roll_3m_return`, `roll_6m_return`, `roll_12m_return`, `nav_ratio_12m`, `drawdown`, `vol_3m`, `rel_perf_vs_cat`, `consec_neg`
 
 ## Deep Learning Pipeline
 
-1. **Exploratory Data Analysis** — distributions, churn rates by category, correlation matrix
-2. **Feature Engineering** — derived ratios (SIP-to-income, missed payment ratio, engagement score)
+1. **EDA** — real AMC/category distributions, return boxplots, correlation heatmap
+2. **Feature Engineering** — expense/alpha ratio, return/volatility ratio, momentum, rating efficiency
 3. **SMOTE** — handles class imbalance
 4. **Baseline** — Logistic Regression
-5. **Deep Neural Network (DNN)** — 4-layer fully connected network with BatchNorm & Dropout
-6. **LSTM** — models 12-month sequential payment history
-7. **Model Comparison** — ROC, Precision-Recall curves, confusion matrices
-8. **Feature Importance** — permutation importance on the DNN
-9. **Churn Scoring** — ensemble probability + risk segmentation (Low / Medium / High / Critical)
+5. **Deep Neural Network (DNN)** — 4-layer network with BatchNorm & Dropout
+6. **LSTM** — 12-month rolling window on sequential monthly performance
+7. **Evaluation** — ROC & Precision-Recall curves, confusion matrices, summary table
+8. **Permutation Feature Importance** — which real fund metrics drive churn
+9. **Risk Scoring** — segment funds into Low / Medium / High / Critical and surface the most at-risk Indian schemes by name
 
 ## Getting Started
 
@@ -48,28 +46,30 @@ A synthetic dataset of **10,000 SIP customers** (~31% churn rate) with 32 featur
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. (Optional) Regenerate the dataset
-python data/generate_dataset.py
+# 2. Prepare the dataset (downloads real Indian MF data from GitHub/Kaggle mirror)
+python data/prepare_dataset.py
 
-# 3. Open and run the notebook
+# 3. Open the notebook
 jupyter notebook sip_churn_prediction.ipynb
 ```
 
-## Key Churn Drivers
+## Key SIP Attrition Drivers (from real Indian fund data)
 
 | Rank | Feature | Insight |
 |---|---|---|
-| 1 | `missed_payment_ratio` | Customers missing payments are most at risk |
-| 2 | `consecutive_missed` | Streaks of missed payments are alarming |
-| 3 | `last_login_days_ago` | Disengaged customers leave sooner |
-| 4 | `payment_failure_rate` | Raw failure rate strongly predicts churn |
-| 5 | `relative_return` | Underperforming the benchmark drives exits |
+| 1 | `rel_perf_vs_cat` | Underperforming the category benchmark is the #1 driver |
+| 2 | `roll_3m_return` | Poor trailing 3-month return → investors stop SIPs |
+| 3 | `drawdown` | Sharp NAV decline triggers redemptions |
+| 4 | `expense_ratio` | High fees with poor returns → SIP discontinuation |
+| 5 | `rating` | Low-rated funds (1–2 stars) see more churn |
+| 6 | `consec_neg` | 3 consecutive negative months → alarm signal |
+| 7 | `alpha` | Negative alpha (underperforms benchmark) → high churn |
 
-## Recommended Interventions
+## Recommended Actions for Indian AMCs
 
-| Risk Segment | Action |
+| Segment | Action |
 |---|---|
-| **Critical** (>75%) | Immediate advisor call; offer SIP pause / amount reduction |
-| **High** (55–75%) | Personalised outreach; highlight portfolio gains |
-| **Medium** (30–55%) | Educational nudges; goal-based SIP reminders |
-| **Low** (<30%) | Regular engagement emails; loyalty rewards |
+| **Critical** (>75%) | Immediate investor communication; offer fund switch or SIP pause |
+| **High** (55–75%) | Personalised update with category context; SIP step-up offer |
+| **Medium** (30–55%) | Educational content on rupee cost averaging; show recovery history |
+| **Low** (<30%) | Regular statements; reward long-tenure SIP investors |
