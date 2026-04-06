@@ -143,6 +143,71 @@ def _claim_experience_score(row) -> float:
 
 df["claim_experience_score"] = df.apply(_claim_experience_score, axis=1)
 
+# ── Behavioral features ───────────────────────────────────────────────────────
+
+# 9. no_claim_years
+#    Approximate number of policy years that were claim-free.
+#    policy_duration_years - total_claims, floored at 0.
+df["policy_duration_years"] = df["policy_duration_days"] / 365.0
+df["no_claim_years"] = (df["policy_duration_years"] - df["total_claims"]).clip(lower=0)
+df = df.drop(columns=["policy_duration_years"])   # helper column; not a final feature
+
+# 10. engagement_score
+#     Measures how actively the customer interacted with the insurer.
+#     Components:
+#       - claims activity  : total_claims (capped at 5 for scaling) → weight 0.6
+#       - renewal bonus    : 1 if policy was Renewed, else 0          → weight 0.4
+#     Score range: 0 – 1 (higher = more engaged)
+df["renewal_flag"] = (df["renewalstatus"].str.lower() == "renewed").astype(float)
+df["engagement_score"] = (
+    df["total_claims"].clip(upper=5) / 5.0 * 0.6
+    + df["renewal_flag"] * 0.4
+)
+df = df.drop(columns=["renewal_flag"])   # helper column; not a final feature
+
+# 11. claim_trend
+#     Direction of claim amounts over time for each policy.
+#       +1  : amounts are trending upward   (last claim > first claim)
+#       -1  : amounts are trending downward (last claim < first claim)
+#        0  : single claim, no claims, or flat
+#     Derived from the raw claims dataset (claimdate, claimamount).
+df_claims_sorted = (
+    df_claims
+    .copy()
+    .assign(claimdate=lambda d: pd.to_datetime(d["claimdate"]))
+    .sort_values(["policyid", "claimdate"])
+)
+
+
+def _claim_trend(group) -> int:
+    amounts = group["claimamount"].tolist()
+    if len(amounts) < 2:
+        return 0
+    return 1 if amounts[-1] > amounts[0] else (-1 if amounts[-1] < amounts[0] else 0)
+
+
+claim_trend_map = (
+    df_claims_sorted
+    .groupby("policyid")
+    .apply(_claim_trend)
+    .rename("claim_trend")
+    .reset_index()
+)
+df = df.merge(claim_trend_map, on="policyid", how="left")
+df["claim_trend"] = df["claim_trend"].fillna(0).astype(int)
+
+# 12. churn_risk_flag  (heuristic)
+#     1 if either of the following high-risk conditions is met:
+#       a. Customer has zero claims AND pays an above-median premium
+#          (paying a lot but getting nothing back → likely to cancel)
+#       b. Poor claim experience (score < 60) regardless of premium level
+#          (bad service history → likely to churn)
+premium_median = df["annualpremium"].median()
+df["churn_risk_flag"] = (
+    ((df["total_claims"] == 0) & (df["annualpremium"] > premium_median))
+    | (df["claim_experience_score"] < 60)
+).astype(int)
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 new_features = [
     "policy_duration_days",
@@ -153,6 +218,10 @@ new_features = [
     "waiting_period_remaining",
     "family_floater_flag",
     "claim_experience_score",
+    "no_claim_years",
+    "engagement_score",
+    "claim_trend",
+    "churn_risk_flag",
 ]
 
 print("\n" + "=" * 50)
