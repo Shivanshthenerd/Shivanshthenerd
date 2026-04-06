@@ -3,57 +3,33 @@ src/features/feature_engineering.py
 -------------------------------------
 Stage 3 – Feature engineering for the Indian SIP churn pipeline.
 
-Takes the merged, cleaned panel produced by ``data_cleaning.py`` and
-generates financially meaningful + behavioural features required for
-churn modelling.  No deep learning is used here; the output is a flat
-feature table ready for classical ML (Logistic Regression, Random
-Forest, XGBoost, etc.).
+Takes the merged, cleaned panel produced by ``data_cleaning.py`` (AMFI
+pipeline) or ``investor_cleaning.py`` (investor pipeline) and generates
+financially meaningful + behavioural features required for churn modelling.
+No deep learning is used here; the output is a flat feature table ready
+for classical ML (Logistic Regression, Random Forest, XGBoost, etc.).
 
-Feature groups generated
--------------------------
-1. **Tenure features**
-   - ``tenure_months``        : how many months the fund-month is active
-   - ``tenure_band``          : bucketed tenure (Early / Growing / Mature / Veteran)
-   - ``is_early_stage``       : binary flag for tenure < 12 months
+AMFI pipeline feature groups (fund × month panel)
+---------------------------------------------------
+1. Tenure features
+2. Rolling return features (momentum, reversal, excess return)
+3. Volatility features
+4. SIP consistency features
+5. Average investment / cost features
+6. Market trend indicators
+7. Fund quality features
 
-2. **Rolling return features** (already present; we enrich / rename)
-   - ``roll_3m_return``       : trailing 3-month cumulative return
-   - ``roll_6m_return``       : trailing 6-month cumulative return
-   - ``roll_12m_return``      : trailing 12-month cumulative return
-   - ``return_momentum``      : 3m return minus 6m return (acceleration)
-   - ``return_reversal``      : 6m return minus 12m return
-
-3. **Volatility features**
-   - ``volatility_3m``        : rolling 3-month std-dev of monthly returns
-   - ``volatility_ratio``     : 3m volatility normalised by annual SD
-   - ``sharpe_3m``            : approximate 3-month Sharpe (return / vol)
-
-4. **SIP consistency features**
-   - ``missed_payment_ratio`` : fraction of months with negative/zero returns
-                               used as a proxy for SIP pause / missed payment
-   - ``consec_neg_flag``      : 1 if 3 consecutive negative months
-   - ``payment_regularity``   : 1 − missed_payment_ratio (higher = better)
-
-5. **Average investment / cost features**
-   - ``avg_sip_amount``       : log-scaled minimum SIP (proxy for ticket size)
-   - ``relative_expense``     : expense ratio relative to category median
-   - ``cost_drag``            : expense_ratio − alpha (net cost vs. skill)
-
-6. **Market trend indicators**
-   - ``drawdown_severity``    : drawdown bucketed into mild / moderate / severe
-   - ``rel_perf_vs_cat``      : return relative to category (already computed)
-   - ``alpha_positive``       : binary — is alpha > 0?
-   - ``above_benchmark``      : binary — relative performance > 0?
-
-7. **Fund quality features**
-   - ``rating_band``          : star rating bucketed (Low / Mid / High)
-   - ``risk_adj_return``      : returns_1yr / (sd_annual + 1e-9)
-   - ``size_band``            : fund size bucketed (Small / Mid / Large)
+Investor pipeline feature groups (investor × month panel)  ← NEW
+------------------------------------------------------------------
+8.  CAGR features          — annualised compounded return on investor portfolio
+9.  Max drawdown features  — rolling peak-to-trough decline
+10. Risk-adjusted return   — Sharpe ratio computed from actual investor returns
+11. NIFTY context features — market regime, NIFTY momentum vs. fund momentum
+12. Investor behaviour     — missed payment streaks, payment regularity
 
 Target column
 -------------
-``churn`` (1 = investor discontinued SIP; 0 = active)  — already present
-in the merged panel from the ingestion stage.
+``churn`` (1 = investor discontinued SIP; 0 = active)
 
 Output
 ------
@@ -464,4 +440,442 @@ def run_feature_engineering(
 
     save_csv(df, out_path)
     log.info("=== Feature engineering complete → %s ===", out_path)
+    return df
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INVESTOR PIPELINE — additional feature generators
+# ══════════════════════════════════════════════════════════════════════════════
+
+def add_cagr_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute CAGR of the investor's SIP portfolio at each observation month.
+
+    CAGR measures the annualised compounded growth rate of the portfolio::
+
+        CAGR = (portfolio_value / total_invested) ^ (12 / months_active) - 1
+
+    A CAGR of 0 is returned when ``total_invested`` ≤ 0 or
+    ``months_active`` < 1 (avoids division-by-zero on the first month).
+
+    Three additional derived signals are computed:
+    - ``cagr_vs_nifty``   : CAGR minus estimated NIFTY CAGR (alpha proxy)
+    - ``cagr_positive``   : binary — is the investor in profit?
+    - ``cagr_band``       : bucketed (<0 %, 0–8 %, 8–15 %, >15 %)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Investor × month panel with ``portfolio_value``, ``total_invested``,
+        ``total_months_active``, ``nifty_12m_return`` present.
+
+    Returns
+    -------
+    pd.DataFrame
+        Panel with CAGR feature columns added.
+    """
+    df = df.copy()
+
+    # Raw CAGR
+    ratio = _safe_divide(
+        df["portfolio_value"],
+        df["total_invested"].replace(0, np.nan),
+        fill=1.0,
+    )
+    n = df["total_months_active"].clip(lower=1)
+    df["cagr"] = ratio.pow(12.0 / n) - 1.0
+
+    # Approximate NIFTY CAGR using rolling 12-month return as a proxy
+    # (annualised: (1 + 12m_return)^1 - 1 is already annualised for 12 months)
+    df["nifty_cagr_approx"] = df["nifty_12m_return"].fillna(0.0)
+
+    # Investor CAGR relative to NIFTY
+    df["cagr_vs_nifty"] = df["cagr"] - df["nifty_cagr_approx"]
+
+    # Binary: investor in profit
+    df["cagr_positive"] = (df["cagr"] > 0).astype(int)
+
+    # Bucketed CAGR band (useful for tree splits)
+    df["cagr_band"] = pd.cut(
+        df["cagr"],
+        bins=[-np.inf, 0.0, 0.08, 0.15, np.inf],
+        labels=["Negative", "Low", "Moderate", "High"],
+        right=True,
+    ).astype(str)
+
+    log.info("CAGR features added: cagr, cagr_vs_nifty, cagr_positive, cagr_band")
+    return df
+
+
+def add_max_drawdown_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute rolling max drawdown of the investor's portfolio.
+
+    Max drawdown measures the largest peak-to-trough decline in portfolio
+    value experienced by the investor up to each observation month::
+
+        max_drawdown_t = min over s ≤ t of  (value_s - peak_s) / peak_s
+
+    Two supporting features are also generated:
+    - ``in_drawdown``      : 1 if current portfolio is below its historical peak
+    - ``drawdown_recovery``: 1 if last month was the trough (recovering now)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Investor × month panel with ``portfolio_value``, ``investor_id``,
+        ``date`` present.
+
+    Returns
+    -------
+    pd.DataFrame
+        Panel with drawdown feature columns added.
+    """
+    df = df.copy().sort_values(["investor_id", "date"])
+
+    # Per-investor rolling peak portfolio value
+    df["portfolio_peak"] = (
+        df.groupby("investor_id")["portfolio_value"]
+        .transform("cummax")
+    )
+
+    # Drawdown at each month: (value - peak) / peak  (always ≤ 0)
+    df["portfolio_drawdown"] = _safe_divide(
+        df["portfolio_value"] - df["portfolio_peak"],
+        df["portfolio_peak"],
+        fill=0.0,
+    )
+
+    # Max drawdown experienced so far (running minimum of drawdown column)
+    df["max_drawdown"] = (
+        df.groupby("investor_id")["portfolio_drawdown"]
+        .transform("cummin")
+    )
+
+    # Binary: currently below peak
+    df["in_drawdown"] = (df["portfolio_drawdown"] < 0).astype(int)
+
+    # Binary: recovering (prev month was worse drawdown than this month)
+    prev_dd = df.groupby("investor_id")["portfolio_drawdown"].shift(1)
+    df["drawdown_recovery"] = (
+        (df["portfolio_drawdown"] > prev_dd) & (df["in_drawdown"] == 1)
+    ).astype(int)
+
+    log.info(
+        "Max drawdown features added: portfolio_drawdown, max_drawdown, "
+        "in_drawdown, drawdown_recovery"
+    )
+    return df
+
+
+def add_risk_adjusted_return_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute rolling risk-adjusted return metrics for each investor.
+
+    Three metrics are computed over a trailing 12-month window:
+
+    - **Sharpe ratio (12m)**::
+
+          sharpe_12m = (mean_monthly_return - rf_monthly) / std_monthly_return × √12
+
+      where ``rf_monthly ≈ 6.5 % / 12`` (approximate Indian repo rate).
+
+    - **Sortino ratio (12m)** — like Sharpe but only penalises downside
+      volatility (standard deviation of negative-return months).
+
+    - **Calmar ratio** — CAGR / |max_drawdown| (return per unit of drawdown
+      risk).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Investor × month panel with ``fund_monthly_return``,
+        ``cagr``, ``max_drawdown`` present.
+
+    Returns
+    -------
+    pd.DataFrame
+        Panel with risk-adjusted return columns added.
+    """
+    df = df.copy().sort_values(["investor_id", "date"])
+    rf_monthly = 0.065 / 12   # ~6.5% Indian risk-free rate / 12
+
+    # Rolling 12-month Sharpe per investor
+    def rolling_sharpe(s: pd.Series) -> pd.Series:
+        excess = s - rf_monthly
+        mean_e = excess.rolling(12, min_periods=3).mean()
+        std_r  = s.rolling(12, min_periods=3).std()
+        return (mean_e / std_r.replace(0, np.nan)).fillna(0.0) * np.sqrt(12)
+
+    df["sharpe_12m"] = (
+        df.groupby("investor_id")["fund_monthly_return"]
+        .transform(rolling_sharpe)
+    )
+
+    # Rolling 12-month Sortino per investor (downside std only)
+    def rolling_sortino(s: pd.Series) -> pd.Series:
+        excess     = s - rf_monthly
+        mean_e     = excess.rolling(12, min_periods=3).mean()
+        # Downside deviation: std of returns below rf only
+        def downside_std(window):
+            neg = window[window < rf_monthly]
+            return neg.std() if len(neg) >= 2 else np.nan
+        down_std = s.rolling(12, min_periods=3).apply(downside_std, raw=False)
+        return (mean_e / down_std.replace(0, np.nan)).fillna(0.0) * np.sqrt(12)
+
+    df["sortino_12m"] = (
+        df.groupby("investor_id")["fund_monthly_return"]
+        .transform(rolling_sortino)
+    )
+
+    # Calmar ratio: CAGR / |max_drawdown|
+    # Clamp max_drawdown away from 0 to avoid division by zero
+    df["calmar_ratio"] = _safe_divide(
+        df["cagr"],
+        df["max_drawdown"].abs().replace(0, np.nan),
+        fill=0.0,
+    )
+
+    log.info(
+        "Risk-adjusted return features added: sharpe_12m, sortino_12m, calmar_ratio"
+    )
+    return df
+
+
+def add_nifty_context_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add NIFTY-based market context features to the investor panel.
+
+    Features generated:
+    - ``market_regime``       : Bull / Flat / Bear based on NIFTY 3m return
+    - ``fund_vs_nifty_3m``    : fund 3m return minus NIFTY 3m return
+    - ``fund_vs_nifty_12m``   : fund 12m return minus NIFTY 12m return
+    - ``nifty_drawdown_flag`` : 1 if NIFTY is in drawdown (< −5 %)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Investor × month panel with fund and NIFTY return columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        Panel with NIFTY context features added.
+    """
+    df = df.copy()
+
+    # Market regime based on NIFTY rolling 3m return
+    df["market_regime"] = pd.cut(
+        df["nifty_3m_return"].fillna(0.0),
+        bins=[-np.inf, -0.05, 0.03, np.inf],
+        labels=["Bear", "Flat", "Bull"],
+        right=True,
+    ).astype(str)
+
+    # Fund alpha vs. NIFTY over 3m and 12m horizons
+    # Approximate fund rolling returns from monthly return column
+    roll_3m = (
+        df.sort_values(["investor_id", "date"])
+        .groupby("investor_id")["fund_monthly_return"]
+        .transform(lambda s: s.rolling(3, min_periods=1).sum())
+    )
+    df["fund_vs_nifty_3m"] = roll_3m - df["nifty_3m_return"].fillna(0.0)
+
+    roll_12m = (
+        df.sort_values(["investor_id", "date"])
+        .groupby("investor_id")["fund_monthly_return"]
+        .transform(lambda s: s.rolling(12, min_periods=1).sum())
+    )
+    df["fund_vs_nifty_12m"] = roll_12m - df["nifty_12m_return"].fillna(0.0)
+
+    # Flag deep NIFTY drawdown (often triggers panic selling / SIP pauses)
+    df["nifty_drawdown_flag"] = (df["nifty_drawdown"] < -0.05).astype(int)
+
+    log.info(
+        "NIFTY context features added: market_regime, fund_vs_nifty_3m, "
+        "fund_vs_nifty_12m, nifty_drawdown_flag"
+    )
+    return df
+
+
+def add_investor_behaviour_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add investor behavioural features from payment history.
+
+    Features generated:
+    - ``missed_payment_ratio_12m``: fraction of last 12 months with missed payments
+    - ``payment_streak``          : consecutive months without a missed payment
+    - ``consec_missed``           : consecutive months with a missed payment
+    - ``avg_monthly_investment``  : log(monthly_investment) — ticket-size proxy
+    - ``tenure_band``             : bucketed tenure (Early/Growing/Mature/Veteran)
+    - ``is_early_stage``          : binary flag for < 24 months tenure
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Investor × month panel with ``missed_this_month``,
+        ``monthly_investment``, ``total_months_active`` present.
+
+    Returns
+    -------
+    pd.DataFrame
+        Panel with investor behaviour features added.
+    """
+    df = df.copy().sort_values(["investor_id", "date"])
+
+    # Rolling 12-month missed-payment ratio
+    df["missed_payment_ratio_12m"] = (
+        df.groupby("investor_id")["missed_this_month"]
+        .transform(lambda s: s.rolling(12, min_periods=1).mean())
+    )
+
+    # Consecutive months without a missed payment (payment streak)
+    def _consecutive_zeros(s: pd.Series) -> pd.Series:
+        """Count consecutive 0s ending at each position."""
+        result = np.zeros(len(s), dtype=float)
+        streak = 0
+        for i, v in enumerate(s):
+            streak = 0 if v else streak + 1
+            result[i] = streak
+        return pd.Series(result, index=s.index)
+
+    df["payment_streak"] = (
+        df.groupby("investor_id")["missed_this_month"]
+        .transform(_consecutive_zeros)
+    )
+
+    # Consecutive months WITH a missed payment (stress signal)
+    def _consecutive_ones(s: pd.Series) -> pd.Series:
+        result = np.zeros(len(s), dtype=float)
+        streak = 0
+        for i, v in enumerate(s):
+            streak = streak + 1 if v else 0
+            result[i] = streak
+        return pd.Series(result, index=s.index)
+
+    df["consec_missed"] = (
+        df.groupby("investor_id")["missed_this_month"]
+        .transform(_consecutive_ones)
+    )
+
+    # Log ticket size (log-transform reduces skew from wide SIP amount range)
+    df["avg_monthly_investment"] = np.log1p(df["monthly_investment"])
+
+    # Tenure features
+    df["tenure_band"] = pd.cut(
+        df["total_months_active"],
+        bins=[0, 24, 48, 84, 121],
+        labels=["Early", "Growing", "Mature", "Veteran"],
+        right=True,
+    ).astype(str)
+    df["is_early_stage"] = (df["total_months_active"] < 24).astype(int)
+
+    log.info(
+        "Investor behaviour features added: missed_payment_ratio_12m, "
+        "payment_streak, consec_missed, avg_monthly_investment, "
+        "tenure_band, is_early_stage"
+    )
+    return df
+
+
+def encode_investor_categoricals(df: pd.DataFrame) -> pd.DataFrame:
+    """Label-encode string categorical columns in the investor feature table.
+
+    Converts ``tenure_band``, ``market_regime``, ``cagr_band``,
+    ``fund_category``, ``age_group`` to integer codes.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Investor panel after all feature generators.
+
+    Returns
+    -------
+    pd.DataFrame
+        Panel with categorical columns encoded as integers.
+    """
+    df = df.copy()
+    cat_cols = [
+        "tenure_band", "market_regime", "cagr_band",
+        "fund_category", "age_group",
+    ]
+    for col in cat_cols:
+        if col in df.columns:
+            df[col] = pd.Categorical(df[col]).codes
+    log.info("Investor categorical columns encoded: %s",
+             [c for c in cat_cols if c in df.columns])
+    return df
+
+
+def select_investor_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Select and order the final investor-level feature columns.
+
+    Non-feature columns (high-cardinality strings, raw intermediates,
+    intermediate portfolio tracking columns) are dropped.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Fully enriched investor × month panel.
+
+    Returns
+    -------
+    pd.DataFrame
+        Final feature table with ``churn`` as the last column.
+    """
+    drop_cols = {
+        "investor_name",   # high-cardinality PII string
+        "city",            # high-cardinality (encode separately if needed)
+        "status",          # redundant with churn
+        "sip_end_date",    # leakage risk (only known post-churn)
+        "fund_name",       # high-cardinality string (category already encoded)
+        "amc",             # high-cardinality string
+        "portfolio_peak",  # intermediate SIP computation artefact
+        "units_bought",    # per-month units — replaced by cumulative_units
+    }
+
+    keep = [c for c in df.columns if c not in drop_cols]
+    # Ensure churn is last
+    keep = [c for c in keep if c != "churn"] + ["churn"]
+
+    df_out = df[keep].copy()
+    log.info("Investor feature table: %d rows × %d columns", *df_out.shape)
+    log.info(
+        "Target distribution:  churn=1: %d  churn=0: %d",
+        (df_out["churn"] == 1).sum(),
+        (df_out["churn"] == 0).sum(),
+    )
+    return df_out
+
+
+def run_feature_engineering_investor(
+    df_panel: pd.DataFrame,
+    out_path: str | Path = FEATURES_FILE,
+) -> pd.DataFrame:
+    """Run the investor-pipeline feature engineering sequence.
+
+    Applies CAGR, max drawdown, risk-adjusted return, NIFTY context, and
+    investor behaviour features; encodes categoricals; selects final columns;
+    and saves ``features.csv``.
+
+    Parameters
+    ----------
+    df_panel : pd.DataFrame
+        Cleaned investor × month panel from
+        ``investor_cleaning.run_investor_cleaning()``.
+    out_path : str or Path
+        Destination for the feature CSV.
+
+    Returns
+    -------
+    pd.DataFrame
+        Final feature table (also persisted to *out_path*).
+    """
+    log.info("=== Starting investor feature engineering ===")
+
+    df = add_investor_behaviour_features(df_panel)   # adds tenure_band first
+    df = add_cagr_features(df)
+    df = add_max_drawdown_features(df)
+    df = add_risk_adjusted_return_features(df)
+    df = add_nifty_context_features(df)
+    df = encode_investor_categoricals(df)
+    df = select_investor_features(df)
+
+    save_csv(df, out_path)
+    log.info("=== Investor feature engineering complete → %s ===", out_path)
     return df
