@@ -1,11 +1,17 @@
 import pandas as pd
 
-from clean_datasets import clean_df
+from clean_datasets import df_claims, df_policy, df_premium
 
-# ── Load & clean datasets ─────────────────────────────────────────────────────
-df_premium = clean_df(pd.read_csv("data/medical_insurance_premium.csv"), "Medical Insurance Premium")
-df_claims = clean_df(pd.read_csv("data/insurance_claims.csv"), "Insurance Claims")
-df_policy = clean_df(pd.read_csv("data/policy.csv"), "Policy")
+
+def _require_columns(df: pd.DataFrame, required: set[str], name: str) -> None:
+    missing = sorted(required - set(df.columns))
+    if missing:
+        raise KeyError(f"{name} missing required columns: {missing}")
+
+
+_require_columns(df_policy, {"policyid"}, "df_policy")
+_require_columns(df_premium, {"policyid"}, "df_premium")
+_require_columns(df_claims, {"policyid", "claimid", "claimamount", "settlementamount"}, "df_claims")
 
 # ── Aggregate claims per policy ───────────────────────────────────────────────
 # df_claims has multiple rows per policyid; summarise to one row per policy.

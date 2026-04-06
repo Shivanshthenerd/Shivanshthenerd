@@ -94,6 +94,26 @@ if TARGET_COL not in df_model.columns:
 y = df_model[TARGET_COL].astype(int)
 X = df_model.drop(columns=[TARGET_COL])
 
+if y.isnull().any():
+    raise ValueError("Target contains null values after preprocessing.")
+
+target_values = set(y.unique().tolist())
+if not target_values.issubset({0, 1}):
+    raise ValueError(
+        f"Target must be binary 0/1, found values: {sorted(target_values)}"
+    )
+
+if X.isnull().sum().sum() > 0:
+    raise ValueError("Features contain null values after preprocessing.")
+
+class_counts = y.value_counts()
+if len(class_counts) < 2:
+    raise ValueError("Target must contain at least two classes for stratified split.")
+if class_counts.min() < 2:
+    raise ValueError(
+        f"Each class must have at least 2 samples for stratified split. Counts: {class_counts.to_dict()}"
+    )
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 print("\n" + "=" * 50)
 print("Modeling preparation complete.")

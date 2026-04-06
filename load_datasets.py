@@ -1,9 +1,4 @@
-import pandas as pd
-
-# Load datasets
-df_premium = pd.read_csv("data/medical_insurance_premium.csv")
-df_claims = pd.read_csv("data/insurance_claims.csv")
-df_policy = pd.read_csv("data/policy.csv")
+from clean_datasets import df_claims, df_policy, df_premium
 
 # --- Medical Insurance Premium Dataset ---
 print("=== Medical Insurance Premium Dataset ===")
