@@ -15,7 +15,7 @@ if y_nulls > 0:
 
 # ── Combine X and y into a single DataFrame ───────────────────────────────────
 processed = X.copy()
-processed["churnlabel"] = y.values  # append target as the last column
+processed["churn"] = y.values  # append target as the last column
 
 # ── Save to CSV ───────────────────────────────────────────────────────────────
 FEATURES_PATH = "processed_features.csv"
@@ -29,9 +29,9 @@ print(f"\nFile            : {FEATURES_PATH}")
 print(f"Final shape     : {processed.shape}  "
       f"({processed.shape[0]} rows × {processed.shape[1]} columns)")
 print(f"Feature columns : {X.shape[1]}")
-print(f"Target column   : churnlabel")
+print(f"Target column   : churn")
 print(f"\nMissing values  : {processed.isnull().sum().sum()} (verified clean)")
-print(f"\nTarget distribution:\n{processed['churnlabel'].value_counts().to_string()}")
+print(f"\nTarget distribution:\n{processed['churn'].value_counts().to_string()}")
 print("\nColumn list:")
 for col in processed.columns:
     print(f"  {col}")
