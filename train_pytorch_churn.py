@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, TensorDataset
 DATA_PATH = "processed_features.csv"
 TARGET_COL = "churn"
 BATCH_SIZE = 32
-DROPOUT_RATE = 0.3
+MODEL_DROPOUT_RATE = 0.3
 LR = 0.001
 EPOCHS = 25
 
@@ -20,25 +20,25 @@ class TabularDLModel(nn.Module):
             nn.Linear(input_dim, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(DROPOUT_RATE),
+            nn.Dropout(MODEL_DROPOUT_RATE),
         )
         self.block2 = nn.Sequential(
             nn.Linear(256, 128),
             nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Dropout(DROPOUT_RATE),
+            nn.Dropout(MODEL_DROPOUT_RATE),
         )
         self.block3 = nn.Sequential(
             nn.Linear(128, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(DROPOUT_RATE),
+            nn.Dropout(MODEL_DROPOUT_RATE),
         )
         self.block4 = nn.Sequential(
             nn.Linear(64, 32),
             nn.BatchNorm1d(32),
             nn.ReLU(),
-            nn.Dropout(DROPOUT_RATE),
+            nn.Dropout(MODEL_DROPOUT_RATE),
         )
         self.output = nn.Linear(32, 1)
 
@@ -119,5 +119,5 @@ for epoch in range(1, EPOCHS + 1):
         total += batch_y.numel()
 
     avg_loss = epoch_loss / len(train_loader.dataset)
-    epoch_acc = correct / total if total else 0.0
+    epoch_acc = correct / total
     print(f"Epoch {epoch:02d}/{EPOCHS} - Loss: {avg_loss:.4f} - Accuracy: {epoch_acc:.4f}")
