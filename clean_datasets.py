@@ -1,20 +1,25 @@
+from pathlib import Path
+from zipfile import ZipFile
+import xml.etree.ElementTree as ET
+
 import pandas as pd
 
 
+DATA_DIR = Path("data")
+INDIAN_DATA_PATH = DATA_DIR / "Indian_Insurance_Data.csv"
+MEDICAL_PREMIUM_PATH = DATA_DIR / "Medicalpremium.csv"
+DATASET11_PATH = DATA_DIR / "dataset11.xlsx"
+HANDBOOK_PATH = DATA_DIR / "Hand Book 2021-22_Part III_Health Insurance.xlsx"
+
+NS = {"a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+
+
 def clean_df(df: pd.DataFrame, name: str) -> pd.DataFrame:
-    """
-    Clean a dataframe by:
-    1. Standardising column names (lowercase, spaces → underscores)
-    2. Removing duplicate rows
-    3. Filling missing numerical values with the column mean
-    4. Filling missing categorical values with the column mode
-    """
     print(f"\n{'=' * 50}")
     print(f"Cleaning: {name}")
     print(f"  Shape before cleaning : {df.shape}")
     print(f"  Null counts before    :\n{df.isnull().sum().to_string()}")
 
-    # 1. Standardise column names
     df.columns = (
         df.columns
         .str.strip()
@@ -22,14 +27,12 @@ def clean_df(df: pd.DataFrame, name: str) -> pd.DataFrame:
         .str.replace(r"\s+", "_", regex=True)
     )
 
-    # 2. Remove duplicates
     before_dedup = len(df)
     df = df.drop_duplicates()
     dropped = before_dedup - len(df)
     if dropped:
         print(f"  Duplicates removed    : {dropped}")
 
-    # 3. Handle missing values
     for col in df.columns:
         if df[col].isnull().any():
             if pd.api.types.is_numeric_dtype(df[col]):
@@ -46,19 +49,27 @@ def clean_df(df: pd.DataFrame, name: str) -> pd.DataFrame:
     return df
 
 
-# ── Load datasets ────────────────────────────────────────────────────────────
-df_premium = pd.read_csv("data/medical_insurance_premium.csv")
-df_claims = pd.read_csv("data/insurance_claims.csv")
-df_policy = pd.read_csv("data/policy.csv")
+def _xlsx_row_counts(path: Path) -> dict[str, int]:
+    with ZipFile(path) as zf:
+        sheets = sorted(name for name in zf.namelist() if name.startswith("xl/worksheets/sheet"))
+        out = {}
+        for sheet in sheets:
+            root = ET.fromstring(zf.read(sheet))
+            out[sheet] = len(root.findall(".//a:sheetData/a:row", NS))
+        return out
 
-# ── Clean datasets ───────────────────────────────────────────────────────────
-df_premium = clean_df(df_premium, "Medical Insurance Premium")
-df_claims = clean_df(df_claims, "Insurance Claims")
-df_policy = clean_df(df_policy, "Policy")
 
-# ── Summary ──────────────────────────────────────────────────────────────────
+# Load & clean CSV datasets from the new dataset set
+indian_df = clean_df(pd.read_csv(INDIAN_DATA_PATH), "Indian Insurance Data")
+medical_df = clean_df(pd.read_csv(MEDICAL_PREMIUM_PATH), "Medical Premium")
+
+# Validate workbook availability from the new dataset set
+dataset11_rows = _xlsx_row_counts(DATASET11_PATH)
+handbook_rows = _xlsx_row_counts(HANDBOOK_PATH)
+
 print("\n" + "=" * 50)
-print("Cleaned column names:")
-print(f"  df_premium : {df_premium.columns.tolist()}")
-print(f"  df_claims  : {df_claims.columns.tolist()}")
-print(f"  df_policy  : {df_policy.columns.tolist()}")
+print("New dataset validation summary:")
+print(f"  Indian Insurance Data      : {indian_df.shape}")
+print(f"  Medical Premium            : {medical_df.shape}")
+print(f"  dataset11.xlsx sheets      : {len(dataset11_rows)}")
+print(f"  handbook.xlsx sheets       : {len(handbook_rows)}")
