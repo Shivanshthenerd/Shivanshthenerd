@@ -3,6 +3,7 @@ from zipfile import ZipFile
 import re
 import xml.etree.ElementTree as ET
 
+import numpy as np
 import pandas as pd
 
 
@@ -19,6 +20,8 @@ SMOKER_WEIGHT = 2.0
 DIABETES_WEIGHT = 1.2
 CHRONIC_DISEASE_WEIGHT = 1.2
 PRE_EXISTING_WEIGHT = 1.0
+RISK_NOISE_STD = 0.20
+RANDOM_SEED = 42
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -159,6 +162,111 @@ def _weighted_numeric_signal(df_in: pd.DataFrame, col: str, weight: float) -> pd
     return pd.to_numeric(df_in.get(col, 0), errors="coerce").fillna(0) * weight
 
 
+def _to_binary_numeric(series: pd.Series) -> pd.Series:
+    mapped = (
+        series.astype(str)
+        .str.strip()
+        .str.lower()
+        .replace({"true": "1", "false": "0", "yes": "1", "no": "0"})
+    )
+    return pd.to_numeric(mapped, errors="coerce").fillna(0)
+
+
+def _minmax_scale(series: pd.Series) -> pd.Series:
+    s = pd.to_numeric(series, errors="coerce").fillna(0)
+    s_min = s.min()
+    s_max = s.max()
+    if s_max == s_min:
+        return pd.Series(0.0, index=s.index)
+    return (s - s_min) / (s_max - s_min)
+
+
+def _build_risk_feature_frame(df_in: pd.DataFrame) -> pd.DataFrame:
+    income = pd.to_numeric(df_in.get("income_lpa", 0), errors="coerce").fillna(0) * 100_000
+    med_premium = pd.to_numeric(df_in.get("med_premiumprice", 0), errors="coerce").fillna(0)
+    ds11_premium_annualized = (
+        pd.to_numeric(df_in.get("ds11_monthly_premium", 0), errors="coerce").fillna(0) * 12
+    )
+    premium = _safe_divide_premium_by_income(med_premium, ds11_premium_annualized, income)
+
+    risk_df = pd.DataFrame(
+        {
+            "premium": premium,
+            "smoker": _to_binary_numeric(df_in.get("smoker", 0)),
+            "diabetes": _to_binary_numeric(df_in.get("med_diabetes", 0)),
+            "chronic_disease": _to_binary_numeric(df_in.get("med_anychronicdiseases", 0)),
+            "pre_existing_conditions": _to_binary_numeric(
+                df_in.get("ds11_pre_existing_conditions", 0)
+            ),
+        }
+    )
+    return risk_df
+
+
+def _build_leakage_safe_churn_label(df_in: pd.DataFrame) -> pd.Series:
+    """
+    Create churn from risk-only signals while keeping these signals out of model features.
+    This explicit separation is used for data leakage prevention.
+    """
+    risk_df = _build_risk_feature_frame(df_in)
+    scaled = risk_df.apply(_minmax_scale)
+
+    risk_score = (
+        scaled["premium"] * PREMIUM_BURDEN_WEIGHT
+        + scaled["smoker"] * SMOKER_WEIGHT
+        + scaled["diabetes"] * DIABETES_WEIGHT
+        + scaled["chronic_disease"] * CHRONIC_DISEASE_WEIGHT
+        + scaled["pre_existing_conditions"] * PRE_EXISTING_WEIGHT
+    )
+
+    rng = np.random.default_rng(RANDOM_SEED)
+    noise = rng.normal(loc=0.0, scale=RISK_NOISE_STD, size=len(df_in))
+    noisy_score = risk_score + noise
+    threshold = noisy_score.median()
+    return (noisy_score > threshold).astype(int)
+
+
+def _build_city_tier(city_series: pd.Series) -> pd.Series:
+    city_norm = city_series.astype(str).str.strip().str.lower().replace({"nan": "unknown", "": "unknown"})
+    city_rank = city_norm.map(city_norm.value_counts(dropna=False))
+    tier = pd.cut(city_rank, bins=[-1, 2, 10, np.inf], labels=["tier_3", "tier_2", "tier_1"])
+    return tier.astype(str).replace("nan", "tier_3")
+
+
+def _build_behavioral_training_features(df_in: pd.DataFrame) -> pd.DataFrame:
+    age = pd.to_numeric(df_in.get("age", 0), errors="coerce").fillna(0)
+    ds11_age = pd.to_numeric(df_in.get("ds11_age", 0), errors="coerce").fillna(0)
+    ds11_oi = pd.to_numeric(df_in.get("ds11_oi", 0), errors="coerce").fillna(0)
+    policy_tier_encoded = pd.to_numeric(df_in.get("ds11_policy_tier_encoded", 0), errors="coerce").fillna(0)
+    provider_type_encoded = pd.to_numeric(df_in.get("ds11_provider_type_encoded", 0), errors="coerce").fillna(0)
+    recommended_policy = df_in.get("ds11_recommended_policy", "").astype(str).str.lower()
+    policy_tier_text = df_in.get("ds11_policy_tier", "").astype(str).str.lower()
+
+    policy_duration = (age - (0.75 * ds11_age)).clip(lower=1)
+    claim_frequency_ratio = ds11_oi.div(policy_duration.replace(0, pd.NA)).fillna(0)
+    no_claim_years = (policy_duration / (1 + ds11_oi)).clip(lower=0)
+    family_floater_flag = (
+        recommended_policy.str.contains("family", regex=False)
+        | policy_tier_text.str.contains("family", regex=False)
+    ).astype(int)
+    engagement_score = (
+        no_claim_years
+        + (policy_tier_encoded + 1) * 0.6
+        + (provider_type_encoded + 1) * 0.4
+    )
+
+    return pd.DataFrame(
+        {
+            "claim_frequency_ratio": claim_frequency_ratio,
+            "policy_duration": policy_duration,
+            "engagement_score": engagement_score,
+            "no_claim_years": no_claim_years,
+            "family_floater_flag": family_floater_flag,
+            "city_tier": _build_city_tier(df_in.get("city", pd.Series(["unknown"] * len(df_in)))),
+        }
+    )
+
+
 # 1) Load all 4 newly-added datasets
 indian_df = _safe_load_csv(INDIAN_DATA_PATH)
 medical_df = _safe_load_csv(MEDICAL_PREMIUM_PATH)
@@ -195,36 +303,12 @@ else:
     df["handbook_numeric_std"] = 0.0
     df["handbook_numeric_p90"] = 0.0
 
-# 4) Build churn label from combined risk signals
-health_signal_cols = ["smoker", "med_diabetes", "med_anychronicdiseases", "ds11_pre_existing_conditions"]
-missing_health_cols = [col for col in health_signal_cols if col not in df.columns]
-if missing_health_cols:
-    print(f"Warning: Missing expected health signal column(s): {missing_health_cols}")
+# 4) Create churn label from risk-only signals (data leakage prevention)
+df["churnlabel"] = _build_leakage_safe_churn_label(df)
 
-for col in health_signal_cols:
-    if col in df.columns:
-        df[col] = df[col].astype(str).str.lower().replace({"true": "1", "false": "0", "yes": "1", "no": "0"})
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-income = pd.to_numeric(df.get("income_lpa", 0), errors="coerce").fillna(0) * 100_000
-med_premium = pd.to_numeric(df.get("med_premiumprice", 0), errors="coerce").fillna(0)
-ds11_premium_annualized = pd.to_numeric(df.get("ds11_monthly_premium", 0), errors="coerce").fillna(0) * 12
-
-premium_burden = _safe_divide_premium_by_income(med_premium, ds11_premium_annualized, income)
-
-risk_score = (
-    premium_burden * PREMIUM_BURDEN_WEIGHT
-    + _weighted_numeric_signal(df, "smoker", SMOKER_WEIGHT)
-    + _weighted_numeric_signal(df, "med_diabetes", DIABETES_WEIGHT)
-    + _weighted_numeric_signal(df, "med_anychronicdiseases", CHRONIC_DISEASE_WEIGHT)
-    + _weighted_numeric_signal(df, "ds11_pre_existing_conditions", PRE_EXISTING_WEIGHT)
-)
-
-# This is a proxy churn target derived from risk signals because the added
-# datasets do not provide a direct churn label for every combined row.
-# Median thresholding is used intentionally, which tends to produce a near
-# balanced target split and may differ from real-world churn prevalence.
-df["churnlabel"] = (risk_score > risk_score.median()).astype(int)
+# 5) Build model training features from non-risk behavioral/derived signals only
+behavioral_features = _build_behavioral_training_features(df)
+df = pd.concat([behavioral_features, df["churnlabel"]], axis=1)
 
 print("\n" + "=" * 50)
 print("Feature engineering complete using all 4 newly-added datasets")

@@ -5,6 +5,13 @@ from feature_engineering import df
 
 MISSING_CATEGORICAL_PLACEHOLDER = "unknown"
 TARGET_CANDIDATES = ["churn", "churnlabel"]
+RISK_FEATURES = {
+    "premium",
+    "smoker",
+    "diabetes",
+    "chronic_disease",
+    "pre_existing_conditions",
+}
 
 df_model = df.copy()
 
@@ -59,6 +66,14 @@ for col in feature_cols:
     if df_model[col].isnull().any():
         df_model[col] = _fill_numeric_series(df_model[col])
 
+# Data leakage prevention: ensure risk-label features are excluded from X
+overlap = sorted(set(feature_cols).intersection(RISK_FEATURES))
+if overlap:
+    raise ValueError(
+        "Data leakage prevention check failed: risk features present in X: "
+        f"{overlap}"
+    )
+
 # Scale numeric features
 scaler = StandardScaler()
 df_model[feature_cols] = scaler.fit_transform(df_model[feature_cols])
@@ -79,3 +94,7 @@ print("Modeling preparation complete.")
 print(f"X shape : {X.shape}")
 print(f"y shape : {y.shape}")
 print(f"Target  : {TARGET_COL}")
+print("Data leakage prevention: risk features removed from training X.")
+print("Final training features:")
+for col in X.columns:
+    print(f"  {col}")
