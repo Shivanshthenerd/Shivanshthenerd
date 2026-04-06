@@ -70,8 +70,8 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
 X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
-y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32)
-y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).unsqueeze(1)
+y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32).unsqueeze(1)
 
 train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
 test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
@@ -80,7 +80,7 @@ train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
 model = TabularDLModel(input_dim=X_train_tensor.shape[1])
-sample_logits = model(X_train_tensor[: min(BATCH_SIZE, len(X_train_tensor))])
+sample_logits = model(X_train_tensor[: min(BATCH_SIZE, X_train_tensor.shape[0])])
 
 print("\n" + "=" * 60)
 print("PyTorch Churn Data Preparation")
