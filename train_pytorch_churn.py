@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, TensorDataset
 DATA_PATH = "processed_features.csv"
 TARGET_COL = "churn"
 BATCH_SIZE = 32
-MODEL_DROPOUT_RATE = 0.3
+DROPOUT_RATE = 0.3
 LR = 0.001
 EPOCHS = 25
 
@@ -20,25 +20,25 @@ class TabularDLModel(nn.Module):
             nn.Linear(input_dim, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(MODEL_DROPOUT_RATE),
+            nn.Dropout(DROPOUT_RATE),
         )
         self.block2 = nn.Sequential(
             nn.Linear(256, 128),
             nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Dropout(MODEL_DROPOUT_RATE),
+            nn.Dropout(DROPOUT_RATE),
         )
         self.block3 = nn.Sequential(
             nn.Linear(128, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(MODEL_DROPOUT_RATE),
+            nn.Dropout(DROPOUT_RATE),
         )
         self.block4 = nn.Sequential(
             nn.Linear(64, 32),
             nn.BatchNorm1d(32),
             nn.ReLU(),
-            nn.Dropout(MODEL_DROPOUT_RATE),
+            nn.Dropout(DROPOUT_RATE),
         )
         self.output = nn.Linear(32, 1)
 
