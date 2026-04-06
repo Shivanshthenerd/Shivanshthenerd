@@ -6,7 +6,7 @@ from clean_datasets import load_and_clean_datasets
 df_premium, df_claims, df_policy = load_and_clean_datasets("data")
 
 df_policy = (
-    df_policy.sort_values(["policyid", "policyenddate"]) if "policyenddate" in df_policy.columns else df_policy
+    df_policy.sort_values(["policyid", "policyenddate"], na_position="last") if "policyenddate" in df_policy.columns else df_policy
 )
 df_policy = df_policy.drop_duplicates(subset=["policyid"], keep="last")
 df_premium = df_premium.drop_duplicates(subset=["policyid"], keep="last")
@@ -19,16 +19,20 @@ if "claimstatus" in df_claims.columns:
     df_claims["claimstatus"] = df_claims["claimstatus"].astype(str).str.lower().fillna("pending")
 
 # ── Aggregate claims per policy ───────────────────────────────────────────────
-df_claims_agg = (
-    df_claims
-    .groupby("policyid", as_index=False)
-    .agg(
-        total_claims=("claimid", "nunique") if "claimid" in df_claims.columns else ("policyid", "count"),
-        avg_claim_amount=("claimamount", "mean"),
-        total_settlement_amount=("settlementamount", "sum"),
-        approved_claims=("claimstatus", lambda s: (s == "approved").sum()) if "claimstatus" in df_claims.columns else ("policyid", "count"),
-    )
-)
+agg_spec: dict[str, tuple[str, str] | tuple[str, object]] = {
+    "total_claims": ("claimid", "nunique") if "claimid" in df_claims.columns else ("policyid", "count"),
+}
+if "claimamount" in df_claims.columns:
+    agg_spec["avg_claim_amount"] = ("claimamount", "mean")
+if "settlementamount" in df_claims.columns:
+    agg_spec["total_settlement_amount"] = ("settlementamount", "sum")
+if "claimstatus" in df_claims.columns:
+    agg_spec["approved_claims"] = ("claimstatus", lambda s: (s == "approved").sum())
+
+df_claims_agg = df_claims.groupby("policyid", as_index=False).agg(**agg_spec)
+for col in ["avg_claim_amount", "total_settlement_amount", "approved_claims"]:
+    if col not in df_claims_agg.columns:
+        df_claims_agg[col] = 0
 
 # ── Merge all datasets ────────────────────────────────────────────────────────
 df = pd.merge(df_policy, df_premium, on="policyid", how="left", suffixes=("", "_prem"))
@@ -58,16 +62,16 @@ df["policyenddate"] = pd.to_datetime(df["policyenddate"], errors="coerce")
 df["policy_duration_days"] = (df["policyenddate"] - df["policystartdate"]).dt.days
 df["policy_duration_days"] = pd.to_numeric(df["policy_duration_days"], errors="coerce").fillna(0).clip(lower=0)
 
-df["claim_frequency_ratio"] = df.apply(
-    lambda row: row["total_claims"] / row["policy_duration_days"]
-    if row["policy_duration_days"] > 0
-    else 0.0,
-    axis=1,
+df["claim_frequency_ratio"] = (
+    df["total_claims"]
+    .div(df["policy_duration_days"].replace(0, pd.NA))
+    .fillna(0.0)
 )
 
-df["claim_approval_rate"] = df.apply(
-    lambda row: row["approved_claims"] / row["total_claims"] if row["total_claims"] > 0 else 0.0,
-    axis=1,
+df["claim_approval_rate"] = (
+    df["approved_claims"]
+    .div(df["total_claims"].replace(0, pd.NA))
+    .fillna(0.0)
 )
 
 TIER_1_REGIONS = {"delhi", "maharashtra", "karnataka", "tamil nadu"}
@@ -93,10 +97,24 @@ def _estimate_income(region: str, age: float) -> float:
     return base * age_factor
 
 
-df["estimated_income"] = df.apply(lambda row: _estimate_income(row["region"], row["age"]), axis=1)
-df["premium_to_income_proxy"] = df.apply(
-    lambda row: row["annualpremium"] / row["estimated_income"] if row["estimated_income"] > 0 else 0.0,
-    axis=1,
+region_norm = df["region"].astype(str).str.strip().str.lower()
+tier = pd.Series(3, index=df.index)
+tier = tier.mask(region_norm.isin(TIER_2_REGIONS), 2)
+tier = tier.mask(region_norm.isin(TIER_1_REGIONS), 1)
+base_income = tier.map(TIER_BASE_INCOME).astype(float)
+
+age = df["age"].astype(float)
+# age bands mirror _estimate_income thresholds: <25, 25-34, 35-49, 50+
+age_factor = pd.cut(
+    age,
+    bins=[-float("inf"), 25, 35, 50, float("inf")],
+    labels=[0.6, 0.85, 1.0, 0.9],
+    right=False,
+).astype(float)
+
+df["estimated_income"] = base_income * age_factor
+df["premium_to_income_proxy"] = (
+    df["annualpremium"].div(df["estimated_income"].replace(0, pd.NA)).fillna(0.0)
 )
 df = df.drop(columns=["estimated_income"])
 

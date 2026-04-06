@@ -7,7 +7,7 @@ df_premium, df_claims, df_policy = load_and_clean_datasets("data")
 
 # Enforce one-policy grain for policy and premium tables.
 df_policy = (
-    df_policy.sort_values(["policyid", "policyenddate"]) if "policyenddate" in df_policy.columns else df_policy
+    df_policy.sort_values(["policyid", "policyenddate"], na_position="last") if "policyenddate" in df_policy.columns else df_policy
 )
 df_policy = df_policy.drop_duplicates(subset=["policyid"], keep="last")
 
@@ -21,15 +21,21 @@ if "claimstatus" in df_claims.columns:
     df_claims["claimstatus"] = df_claims["claimstatus"].astype(str).str.lower().fillna("pending")
 
 # ── Aggregate claims per policy ───────────────────────────────────────────────
-agg_spec = {
+agg_spec: dict[str, tuple[str, str] | tuple[str, object]] = {
     "total_claims": ("claimid", "nunique") if "claimid" in df_claims.columns else ("policyid", "count"),
-    "avg_claim_amount": ("claimamount", "mean"),
-    "total_settlement_amount": ("settlementamount", "sum"),
 }
+if "claimamount" in df_claims.columns:
+    agg_spec["avg_claim_amount"] = ("claimamount", "mean")
+if "settlementamount" in df_claims.columns:
+    agg_spec["total_settlement_amount"] = ("settlementamount", "sum")
 if "claimstatus" in df_claims.columns:
-    agg_spec["approved_claims"] = ("claimstatus", lambda s: (s == "approved").sum())
+    # claimstatus normalized to lowercase above
+    agg_spec["approved_claims"] = ("claimstatus", lambda s: s.eq("approved").sum())
 
 df_claims_agg = df_claims.groupby("policyid", as_index=False).agg(**agg_spec)
+for col in ["avg_claim_amount", "total_settlement_amount", "approved_claims"]:
+    if col not in df_claims_agg.columns:
+        df_claims_agg[col] = 0
 
 # ── Merge all datasets ────────────────────────────────────────────────────────
 df = pd.merge(df_policy, df_premium, on="policyid", how="left", suffixes=("", "_prem"))

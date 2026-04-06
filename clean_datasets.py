@@ -108,7 +108,18 @@ RENEWAL_STATUS_MAP = {
 }
 
 
-def _slug(value: str) -> str:
+NUMERIC_CLIP_NONNEGATIVE = {
+    "age",
+    "bmi",
+    "annualpremium",
+    "claimamount",
+    "settlementamount",
+    "suminsured",
+}
+DATETIME_FALLBACK = pd.Timestamp("2000-01-01")  # conservative sentinel for entirely invalid date columns
+
+
+def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value).strip().lower())
 
 
@@ -147,6 +158,13 @@ def _to_numeric_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(cleaned, errors="coerce")
 
 
+def _datetime_median(series: pd.Series):
+    non_null = pd.to_datetime(series.dropna(), errors="coerce").dropna().sort_values()
+    if non_null.empty:
+        return pd.NaT
+    return non_null.iloc[len(non_null) // 2]
+
+
 def _normalize_status_columns(df: pd.DataFrame) -> None:
     if "claimstatus" in df.columns:
         df["claimstatus"] = (
@@ -155,7 +173,7 @@ def _normalize_status_columns(df: pd.DataFrame) -> None:
                 lambda x: (
                     "pending"
                     if pd.isna(x)
-                    else CLAIM_STATUS_MAP.get(_slug(x), _slug(x))
+                    else CLAIM_STATUS_MAP.get(_normalize_text(x), _normalize_text(x))
                 )
             )
             .fillna("pending")
@@ -167,7 +185,7 @@ def _normalize_status_columns(df: pd.DataFrame) -> None:
                 lambda x: (
                     "pending"
                     if pd.isna(x)
-                    else RENEWAL_STATUS_MAP.get(_slug(x), _slug(x))
+                    else RENEWAL_STATUS_MAP.get(_normalize_text(x), _normalize_text(x))
                 )
             )
             .fillna("pending")
@@ -212,7 +230,7 @@ def clean_df(df: pd.DataFrame, dataset_kind: DatasetKind) -> pd.DataFrame:
     for col in DATASET_CONTRACT[dataset_kind]["numeric_cols"]:
         if col in df.columns:
             df[col] = _to_numeric_series(df[col])
-            if col in {"claimamount", "settlementamount", "annualpremium", "suminsured", "age", "bmi"}:
+            if col in NUMERIC_CLIP_NONNEGATIVE:
                 df[col] = df[col].clip(lower=0)
 
     for col in DATASET_CONTRACT[dataset_kind]["date_cols"]:
@@ -236,16 +254,14 @@ def clean_df(df: pd.DataFrame, dataset_kind: DatasetKind) -> pd.DataFrame:
             fill_value = df[col].median() if not df[col].dropna().empty else 0
             df[col] = df[col].fillna(fill_value)
         elif pd.api.types.is_datetime64_any_dtype(df[col]):
-            if not df[col].dropna().empty:
-                df[col] = df[col].fillna(df[col].dropna().max())
+            fill_value = _datetime_median(df[col])
+            if pd.notna(fill_value):
+                df[col] = df[col].fillna(fill_value)
+            else:
+                df[col] = df[col].fillna(DATETIME_FALLBACK)
         else:
             mode = df[col].mode(dropna=True)
             df[col] = df[col].fillna(mode.iloc[0] if not mode.empty else "unknown")
-
-    # Convert datetimes to stable ISO strings for downstream scripts.
-    for col in DATASET_CONTRACT[dataset_kind]["date_cols"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
     print(f"  Shape after cleaning  : {df.shape}")
     print(f"  Null counts after     :\n{df.isnull().sum().to_string()}")
