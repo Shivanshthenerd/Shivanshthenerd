@@ -9,6 +9,8 @@ DATA_PATH = "processed_features.csv"
 TARGET_COL = "churn"
 BATCH_SIZE = 32
 DROPOUT_RATE = 0.3
+LR = 0.001
+EPOCHS = 25
 
 
 class TabularDLModel(nn.Module):
@@ -79,14 +81,43 @@ test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-model = TabularDLModel(input_dim=X_train_tensor.shape[1])
-sample_logits = model(X_train_tensor[: min(BATCH_SIZE, X_train_tensor.shape[0])])
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = TabularDLModel(input_dim=X_train_tensor.shape[1]).to(device)
+criterion = nn.BCEWithLogitsLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
 print("\n" + "=" * 60)
-print("PyTorch Churn Data Preparation")
+print("PyTorch Churn Training")
 print("=" * 60)
 print(f"X_train shape : {tuple(X_train_tensor.shape)}")
 print(f"y_train shape : {tuple(y_train_tensor.shape)}")
 print(f"Train batches : {len(train_loader)}")
 print(f"Test batches  : {len(test_loader)}")
-print(f"Sample logits shape : {tuple(sample_logits.shape)}")
+print(f"Device        : {device}")
+
+for epoch in range(1, EPOCHS + 1):
+    model.train()
+    epoch_loss = 0.0
+    correct = 0
+    total = 0
+
+    for batch_x, batch_y in train_loader:
+        batch_x = batch_x.to(device)
+        batch_y = batch_y.to(device)
+
+        optimizer.zero_grad()
+        logits = model(batch_x)
+        loss = criterion(logits, batch_y)
+        loss.backward()
+        optimizer.step()
+
+        epoch_loss += loss.item() * batch_x.size(0)
+
+        probs = torch.sigmoid(logits)
+        preds = (probs >= 0.5).float()
+        correct += (preds == batch_y).sum().item()
+        total += batch_y.numel()
+
+    avg_loss = epoch_loss / len(train_loader.dataset)
+    epoch_acc = correct / total if total else 0.0
+    print(f"Epoch {epoch:02d}/{EPOCHS} - Loss: {avg_loss:.4f} - Accuracy: {epoch_acc:.4f}")
