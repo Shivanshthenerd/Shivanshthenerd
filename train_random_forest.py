@@ -13,7 +13,12 @@ from sklearn.model_selection import train_test_split
 DATA_PATH = "processed_features.csv"
 TARGET_COL = "churn"
 
-df = pd.read_csv(DATA_PATH)
+try:
+    df = pd.read_csv(DATA_PATH)
+except FileNotFoundError as exc:
+    raise FileNotFoundError(
+        f"Input dataset not found at '{DATA_PATH}'. Run the preprocessing pipeline first."
+    ) from exc
 
 if TARGET_COL not in df.columns:
     raise KeyError(f"Target column '{TARGET_COL}' not found in {DATA_PATH}.")
