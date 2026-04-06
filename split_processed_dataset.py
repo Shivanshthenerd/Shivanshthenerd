@@ -11,16 +11,14 @@ df = pd.read_csv(DATA_PATH)
 target_col = next((col for col in TARGET_CANDIDATES if col in df.columns), None)
 if target_col is None:
     raise KeyError(
-        "Target column not found. Expected one of: "
-        f"{', '.join(TARGET_CANDIDATES)}"
+        "Target column not found. Expected: churn or churnlabel."
     )
 
 if target_col != "churn":
     df = df.rename(columns={target_col: "churn"})
-    target_col = "churn"
 
-X = df.drop(columns=[target_col])
-y = df[target_col]
+X = df.drop(columns=["churn"])
+y = df["churn"]
 
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
