@@ -1,0 +1,16 @@
+PolicyID,CustomerID,Age,Gender,Region,BMI,BloodPressure,Smoker,PreExistingConditions,AnnualPremium,PremiumType,InsurancePlan
+POL001,CUST001,34,Male,Maharashtra,24.5,Normal,No,No,12000,Annual,Silver
+POL002,CUST002,45,Female,Delhi,27.8,High,No,Yes,22000,Annual,Gold
+POL003,CUST003,29,Male,Karnataka,22.1,Normal,Yes,No,18000,Semi-Annual,Silver
+POL004,CUST004,52,Female,Tamil Nadu,31.2,High,No,Yes,35000,Annual,Platinum
+POL005,CUST005,38,Male,Gujarat,25.6,Normal,No,No,14500,Annual,Silver
+POL006,CUST006,61,Female,Rajasthan,29.4,High,No,Yes,42000,Annual,Platinum
+POL007,CUST007,27,Male,West Bengal,21.3,Normal,No,No,9500,Semi-Annual,Bronze
+POL008,CUST008,48,Female,Uttar Pradesh,33.0,High,Yes,Yes,38000,Annual,Gold
+POL009,CUST009,36,Male,Kerala,23.7,Normal,No,No,13000,Annual,Silver
+POL010,CUST010,55,Female,Punjab,28.9,Normal,No,Yes,27000,Annual,Gold
+POL011,CUST011,42,Male,Haryana,26.4,Normal,No,No,16000,Annual,Silver
+POL012,CUST012,31,Female,Madhya Pradesh,24.0,Normal,No,No,11000,Annual,Bronze
+POL013,CUST013,58,Male,Bihar,30.5,High,Yes,Yes,45000,Annual,Platinum
+POL014,CUST014,23,Female,Odisha,20.8,Normal,No,No,8000,Semi-Annual,Bronze
+POL015,CUST015,46,Male,Assam,27.2,Normal,No,Yes,24000,Annual,Gold
