@@ -93,7 +93,8 @@ def _load_xlsx_first_sheet(path: Path) -> pd.DataFrame:
 
     for col in df.columns:
         converted = pd.to_numeric(df[col], errors="coerce")
-        # Convert a column to numeric only when most values parse as numeric.
+        # Convert a column to numeric only when at least
+        # NUMERIC_CONVERSION_THRESHOLD (80%) parse as numeric.
         # This avoids accidental conversion of predominantly text columns.
         if converted.notna().mean() > NUMERIC_CONVERSION_THRESHOLD:
             df[col] = converted
@@ -154,6 +155,10 @@ def _safe_divide_premium_by_income(
     return (med_premium + ds11_premium_annualized).div(income.replace(0, pd.NA)).fillna(0)
 
 
+def _weighted_numeric_signal(df_in: pd.DataFrame, col: str, weight: float) -> pd.Series:
+    return pd.to_numeric(df_in.get(col, 0), errors="coerce").fillna(0) * weight
+
+
 # 1) Load all 4 newly-added datasets
 indian_df = _safe_load_csv(INDIAN_DATA_PATH)
 medical_df = _safe_load_csv(MEDICAL_PREMIUM_PATH)
@@ -164,7 +169,13 @@ handbook_numeric = _safe_extract_xlsx_numeric_values(HANDBOOK_PATH)
 # The 4 files do not share stable keys for a relational join, so rows are aligned
 # deterministically by repeating shorter datasets over the base dataset index.
 # This keeps every new dataset in use while producing a single modeling table.
+# Note: this creates a synthetic combined table for demonstration/training and
+# can introduce artificial correlations; avoid this approach for production use.
 base = indian_df.reset_index(drop=True).copy()
+if medical_df.empty or dataset11_df.empty:
+    raise ValueError(
+        "Medicalpremium.csv and dataset11.xlsx must contain at least one data row each."
+    )
 med_repeated = medical_df.reindex(base.index % len(medical_df)).reset_index(drop=True)
 ds11_repeated = dataset11_df.reindex(base.index % len(dataset11_df)).reset_index(drop=True)
 
@@ -203,14 +214,16 @@ premium_burden = _safe_divide_premium_by_income(med_premium, ds11_premium_annual
 
 risk_score = (
     premium_burden * PREMIUM_BURDEN_WEIGHT
-    + pd.to_numeric(df.get("smoker", 0), errors="coerce").fillna(0) * SMOKER_WEIGHT
-    + pd.to_numeric(df.get("med_diabetes", 0), errors="coerce").fillna(0) * DIABETES_WEIGHT
-    + pd.to_numeric(df.get("med_anychronicdiseases", 0), errors="coerce").fillna(0) * CHRONIC_DISEASE_WEIGHT
-    + pd.to_numeric(df.get("ds11_pre_existing_conditions", 0), errors="coerce").fillna(0) * PRE_EXISTING_WEIGHT
+    + _weighted_numeric_signal(df, "smoker", SMOKER_WEIGHT)
+    + _weighted_numeric_signal(df, "med_diabetes", DIABETES_WEIGHT)
+    + _weighted_numeric_signal(df, "med_anychronicdiseases", CHRONIC_DISEASE_WEIGHT)
+    + _weighted_numeric_signal(df, "ds11_pre_existing_conditions", PRE_EXISTING_WEIGHT)
 )
 
 # This is a proxy churn target derived from risk signals because the added
 # datasets do not provide a direct churn label for every combined row.
+# Median thresholding is used intentionally, which tends to produce a near
+# balanced target split and may differ from real-world churn prevalence.
 df["churnlabel"] = (risk_score > risk_score.median()).astype(int)
 
 print("\n" + "=" * 50)
