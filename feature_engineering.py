@@ -66,12 +66,93 @@ df["claim_approval_rate"] = df.apply(
     axis=1,
 )
 
+# ── India-specific features ───────────────────────────────────────────────────
+
+# 5. premium_to_income_proxy
+#    Estimate a monthly income proxy from city tier (derived from region) and age.
+#    City tier mapping based on Indian metro / tier-2 / tier-3 classification:
+#      Tier 1 (metros)     – Delhi, Maharashtra, Karnataka, Tamil Nadu
+#      Tier 2 (mid-cities) – Gujarat, Rajasthan, Telangana, West Bengal, Punjab
+#      Tier 3 (others)     – everything else (smaller states / UTs)
+TIER_1_REGIONS = {"delhi", "maharashtra", "karnataka", "tamil nadu"}
+TIER_2_REGIONS = {"gujarat", "rajasthan", "telangana", "west bengal", "punjab"}
+
+TIER_BASE_INCOME = {1: 800_000, 2: 500_000, 3: 300_000}   # annual ₹ estimate
+
+
+def _estimate_income(region: str, age: float) -> float:
+    """Return a simple estimated annual income based on city tier and age."""
+    tier = (
+        1 if str(region).strip().lower() in TIER_1_REGIONS
+        else 2 if str(region).strip().lower() in TIER_2_REGIONS
+        else 3
+    )
+    base = TIER_BASE_INCOME[tier]
+    # Age factor: income ramps up through mid-career then plateaus
+    if age < 25:
+        age_factor = 0.6
+    elif age < 35:
+        age_factor = 0.85
+    elif age < 50:
+        age_factor = 1.0
+    else:
+        age_factor = 0.9
+    return base * age_factor
+
+
+df["estimated_income"] = df.apply(
+    lambda row: _estimate_income(row["region"], row["age"]), axis=1
+)
+# Guard: estimated_income should always be > 0 given the mapping above,
+# but add a safety net just in case.
+df["premium_to_income_proxy"] = df.apply(
+    lambda row: row["annualpremium"] / row["estimated_income"]
+    if row["estimated_income"] > 0
+    else 0.0,
+    axis=1,
+)
+df = df.drop(columns=["estimated_income"])   # helper column; not a final feature
+
+# 6. waiting_period_remaining
+#    Standard IRDAI max waiting period for pre-existing diseases = 4 years (1 460 days).
+#    Once the policy has been active for >= 4 years the waiting period is fully served.
+MAX_WAITING_PERIOD_DAYS = 4 * 365   # 1 460 days
+
+df["waiting_period_remaining"] = (MAX_WAITING_PERIOD_DAYS - df["policy_duration_days"]).clip(lower=0)
+
+# 7. family_floater_flag
+#    PolicyType values in this dataset: "Individual", "Family Floater"
+df["family_floater_flag"] = df["policytype"].str.lower().str.contains("family").astype(int)
+
+# 8. claim_experience_score  (0 – 100; higher = better claim experience)
+#    Three penalty components (all bounded to [0, 1] before scaling):
+#      a. Rejection penalty  = (1 – claim_approval_rate)          → weight 40
+#      b. Amount intensity   = avg_claim_amount / suminsured       → weight 40
+#      c. Frequency penalty  = claim_frequency_ratio * 365        → weight 20
+#    For policies with no claims the score is 100 (neutral; no adverse experience).
+
+
+def _claim_experience_score(row) -> float:
+    if row["total_claims"] == 0:
+        return 100.0
+    rejection_penalty = (1.0 - row["claim_approval_rate"]) * 40.0
+    amount_intensity = min(row["avg_claim_amount"] / row["suminsured"], 1.0) * 40.0 if row["suminsured"] > 0 else 0.0
+    freq_penalty = min(row["claim_frequency_ratio"] * 365.0, 1.0) * 20.0
+    return max(0.0, 100.0 - rejection_penalty - amount_intensity - freq_penalty)
+
+
+df["claim_experience_score"] = df.apply(_claim_experience_score, axis=1)
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 new_features = [
     "policy_duration_days",
     "claim_frequency_ratio",
     "avg_claim_amount",
     "claim_approval_rate",
+    "premium_to_income_proxy",
+    "waiting_period_remaining",
+    "family_floater_flag",
+    "claim_experience_score",
 ]
 
 print("\n" + "=" * 50)
