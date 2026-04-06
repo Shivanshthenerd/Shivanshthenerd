@@ -17,7 +17,7 @@ try:
     df = pd.read_csv(DATA_PATH)
 except FileNotFoundError as exc:
     raise FileNotFoundError(
-        f"Input dataset not found at '{DATA_PATH}'. Run the preprocessing pipeline first."
+        f"Input dataset not found at '{DATA_PATH}'. Ensure preprocessing has run and the file exists."
     ) from exc
 
 if TARGET_COL not in df.columns:
