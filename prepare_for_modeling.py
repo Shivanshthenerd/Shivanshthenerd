@@ -1,107 +1,81 @@
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
-from feature_engineering import df  # noqa: F401 – brings in fully-engineered df
+from feature_engineering import df
 
-# ── Work on a modeling-ready copy ────────────────────────────────────────────
+MISSING_CATEGORICAL_PLACEHOLDER = "unknown"
+TARGET_CANDIDATES = ["churn", "churnlabel"]
+
 df_model = df.copy()
 
-# Drop identifier and raw date columns that carry no predictive signal
-DROP_COLS = ["policyid", "customerid", "policystartdate", "policyenddate",
-             "agent", "channel"]
-df_model = df_model.drop(columns=[c for c in DROP_COLS if c in df_model.columns])
+TARGET_COL = next((c for c in TARGET_CANDIDATES if c in df_model.columns), None)
+if TARGET_COL is None:
+    raise KeyError(f"Target column not found. Expected one of: {TARGET_CANDIDATES}")
 
-# ── 1. Derive city_tier from region ──────────────────────────────────────────
-#    Mirrors the tier logic in feature_engineering.py (IRDAI city-tier proxy):
-#      1 – Tier-1 metros, 2 – Tier-2 cities, 3 – everything else
-TIER_1_REGIONS = {"delhi", "maharashtra", "karnataka", "tamil nadu"}
-TIER_2_REGIONS = {"gujarat", "rajasthan", "telangana", "west bengal", "punjab"}
+def _fill_numeric_series(series: pd.Series) -> pd.Series:
+    median = series.median()
+    fill_value = 0 if pd.isna(median) else median
+    return series.fillna(fill_value)
 
 
-def _city_tier(region: str) -> int:
-    r = str(region).strip().lower()
-    if r in TIER_1_REGIONS:
-        return 1
-    if r in TIER_2_REGIONS:
-        return 2
-    return 3
+def _fill_missing_values(df_in: pd.DataFrame) -> pd.DataFrame:
+    out = df_in.copy()
+    for col in out.columns:
+        if out[col].isnull().any():
+            if pd.api.types.is_numeric_dtype(out[col]):
+                out[col] = _fill_numeric_series(out[col])
+            else:
+                non_null = out[col].dropna()
+                mode = non_null.mode() if not non_null.empty else pd.Series(dtype=object)
+                out[col] = out[col].fillna(
+                    mode.iloc[0] if not mode.empty else MISSING_CATEGORICAL_PLACEHOLDER
+                )
+    return out
 
 
-df_model["city_tier"] = df_model["region"].apply(_city_tier)
+# Fill missing values before encoding/scaling
+df_model = _fill_missing_values(df_model)
 
-# ── 2. Encode categorical variables ──────────────────────────────────────────
-#    Columns explicitly called out in the task, plus any remaining object columns
-#    (gender, premiumtype, insuranceplan, bloodpressure, preexistingconditions,
-#     renewalstatus) that must be numeric before fitting a model.
-CATEGORICAL_COLS = [
-    "region",
-    "smoker",
-    "city_tier",     # already int but ordinal – encode for uniformity
-    "policytype",
-    "gender",
-    "premiumtype",
-    "insuranceplan",
-    "bloodpressure",
-    "preexistingconditions",
-    "renewalstatus",
+# Encode categorical columns
+categorical_cols = [
+    c for c in df_model.columns
+    if c != TARGET_COL and (
+        pd.api.types.is_object_dtype(df_model[c])
+        or pd.api.types.is_bool_dtype(df_model[c])
+        or str(df_model[c].dtype) == "category"
+    )
 ]
-# Keep only columns that are actually present in df_model
-CATEGORICAL_COLS = [c for c in CATEGORICAL_COLS if c in df_model.columns]
 
-label_encoders: dict[str, LabelEncoder] = {}
-for col in CATEGORICAL_COLS:
+label_encoders = {}
+for col in categorical_cols:
     le = LabelEncoder()
     df_model[col] = le.fit_transform(df_model[col].astype(str))
     label_encoders[col] = le
 
-# ── 3. Normalize numerical features ──────────────────────────────────────────
-#    Core columns called out in the task + the engineered numeric features.
-NUMERIC_COLS = [
-    # Raw
-    "age",
-    "bmi",
-    "annualpremium",
-    "suminsured",
-    # Claim aggregates
-    "total_claims",
-    "avg_claim_amount",
-    "total_settlement_amount",
-    "approved_claims",
-    # Engineered features
-    "policy_duration_days",
-    "claim_frequency_ratio",
-    "claim_approval_rate",
-    "premium_to_income_proxy",
-    "waiting_period_remaining",
-    "claim_experience_score",
-    "no_claim_years",
-    "engagement_score",
-]
-# Keep only columns that are actually present in df_model
-NUMERIC_COLS = [c for c in NUMERIC_COLS if c in df_model.columns]
+# Ensure non-target columns are numeric
+feature_cols = [c for c in df_model.columns if c != TARGET_COL]
+for col in feature_cols:
+    df_model[col] = pd.to_numeric(df_model[col], errors="coerce")
+    if df_model[col].isnull().any():
+        df_model[col] = _fill_numeric_series(df_model[col])
 
+# Scale numeric features
 scaler = StandardScaler()
-df_model[NUMERIC_COLS] = scaler.fit_transform(df_model[NUMERIC_COLS])
+df_model[feature_cols] = scaler.fit_transform(df_model[feature_cols])
 
-# ── 4. Separate features (X) and target (y) ──────────────────────────────────
-#    Target: churnlabel  (0 = not churned, 1 = churned)
-#    Fallback: if churnlabel is absent, derive from renewalstatus encoded value.
-TARGET_COL = "churnlabel"
-if TARGET_COL not in df_model.columns:
-    raise KeyError(f"Target column '{TARGET_COL}' not found in df_model. "
-                   "Check that the policy dataset contains a ChurnLabel column.")
+# Split X and y for downstream scripts
+y_numeric = pd.to_numeric(df_model[TARGET_COL], errors="coerce")
+if y_numeric.isnull().any():
+    bad_count = int(y_numeric.isnull().sum())
+    raise ValueError(
+        f"Target column '{TARGET_COL}' has {bad_count} non-numeric value(s). "
+        "Fix target values before modeling."
+    )
+y = y_numeric.astype(int)
+X = df_model[feature_cols]
 
-y = df_model[TARGET_COL].astype(int)
-X = df_model.drop(columns=[TARGET_COL])
-
-# ── Summary ───────────────────────────────────────────────────────────────────
 print("\n" + "=" * 50)
 print("Modeling preparation complete.")
-print(f"\nX shape : {X.shape}")
+print(f"X shape : {X.shape}")
 print(f"y shape : {y.shape}")
-print(f"\nFeature columns ({len(X.columns)}):")
-for col in X.columns:
-    print(f"  {col}")
-print(f"\nTarget distribution:\n{y.value_counts().to_string()}")
-print("\nX preview (first 5 rows):")
-print(X.head().to_string(index=False))
+print(f"Target  : {TARGET_COL}")
